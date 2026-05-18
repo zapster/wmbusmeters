@@ -1,0 +1,56 @@
+name: Trigger patched HA add-on build
+
+on:
+  push:
+    branches:
+      - fix-amiplus-total-energy-consumption
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Add-on version to publish
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  trigger-patched-addon:
+    if: ${{ github.repository == 'zapster/wmbusmeters' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Prepare dispatch payload
+        id: payload
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="${INPUT_VERSION:-}"
+          if [ -z "$version" ]; then
+            version="2.0.1-amiplus.$((GITHUB_RUN_NUMBER + 1))"
+          fi
+          {
+            echo "version=$version"
+            echo "wmbusmeters_sha=$GITHUB_SHA"
+            echo "wmbusmeters_branch=${GITHUB_REF_NAME}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify dispatch token is configured
+        env:
+          ADDON_DISPATCH_TOKEN: ${{ secrets.ADDON_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$ADDON_DISPATCH_TOKEN" ]; then
+            echo "::error::Configure the ADDON_DISPATCH_TOKEN repository secret with a token that can dispatch zapster/wmbusmeters-ha-addon workflows."
+            exit 1
+          fi
+
+      - name: Trigger patched add-on build
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.ADDON_DISPATCH_TOKEN }}
+          repository: zapster/wmbusmeters-ha-addon
+          event-type: build_patched_addons
+          client-payload: >-
+            {
+              "version": "${{ steps.payload.outputs.version }}",
+              "wmbusmeters_sha": "${{ steps.payload.outputs.wmbusmeters_sha }}",
+              "wmbusmeters_branch": "${{ steps.payload.outputs.wmbusmeters_branch }}"
+            }
