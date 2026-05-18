@@ -1,3 +1,15 @@
+> [!NOTE]
+> This branch is a temporary AMI+ patch fork of upstream `wmbusmeters/wmbusmeters`.
+>
+> Compared to upstream, it tightens AMI+ decoding for the LINZ NETZ smart meter telegrams tested here:
+>
+> - `total_energy_consumption_kwh` is matched to OBIS `1.8.0` / DIF-VIF `0E03`.
+> - `current_power_consumption_kw` is matched to OBIS `1.7.0` / DIF-VIF `0B2B`.
+> - pushes to this branch trigger the patched Home Assistant add-on fork.
+>
+> Related add-on fork: https://github.com/zapster/wmbusmeters-ha-addon
+>
+> LINZ NETZ reference document: https://www.linznetz.at/media/linz_netz_website/netz_dokumente/Beschreibung-Wireless_M-Bus-Schnittstelle.pdf
 
 # wmbusmeters
 
