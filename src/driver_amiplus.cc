@@ -63,8 +63,7 @@ namespace
             Quantity::Power,
             VifScaling::Auto, DifSignedness::Signed,
             FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::PowerW)
+            .set(DifVifKey("0B2B"))
             );
 
         addNumericFieldWithExtractor(
