@@ -1,4 +1,4 @@
-name: Trigger patched HA add-on build
+name: Trigger HA add-on build from this branch
 
 on:
   push:
@@ -25,7 +25,7 @@ jobs:
         run: |
           version="${INPUT_VERSION:-}"
           if [ -z "$version" ]; then
-            version="2.0.1-amiplus.$((GITHUB_RUN_NUMBER + 1))"
+            version="3.0.0-$((GITHUB_RUN_NUMBER + 1))"
           fi
           {
             echo "version=$version"
@@ -47,7 +47,7 @@ jobs:
         with:
           token: ${{ secrets.ADDON_DISPATCH_TOKEN }}
           repository: zapster/wmbusmeters-ha-addon
-          event-type: build_patched_addons
+          event-type: build_addons
           client-payload: >-
             {
               "version": "${{ steps.payload.outputs.version }}",
