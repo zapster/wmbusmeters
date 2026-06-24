@@ -52,13 +52,13 @@ extern "C" _hideLBfromEditor
 */
 typedef struct XMQDoc XMQDoc;
 
-/** Opaque structure referencing a node/attr in the xmq/xml/json document.
+/** Opaque pointer referencing a node/attr in the xmq/xml/json document.
 
-    XMQNode:
+    XMQNodePtr:
 
-    Structure referencing a node/attr in the xmq/xml/json document.
+    Pointer to a node/attr in the xmq/xml/json document.
 */
-typedef struct XMQNode XMQNode;
+typedef void *XMQNodePtr;
 
 /**
     XMQParseState:
@@ -161,6 +161,7 @@ typedef enum
     XMQ_FLAG_NOMERGE = 8,
     XMQ_FLAG_IXML_ALL_PARSES = 16,
     XMQ_FLAG_IXML_TRY_TO_RECOVER = 32,
+    XMQ_FLAG_IXML_FAIL_SILENT = 64,
 } XMQFlagBits;
 
 /**
@@ -247,7 +248,7 @@ typedef enum
     @node: The node triggering the callback.
     @user_data: The user data supplied to for_each.
 */
-typedef XMQProceed (*XMQNodeCallback)(XMQDoc *doc, XMQNode *node, void *user_data);
+typedef XMQProceed (*XMQNodeCallback)(XMQDoc *doc, XMQNodePtr node, void *user_data);
 
 /**
     XMQParseError:
@@ -543,7 +544,7 @@ void xmqSetOriginalSize(XMQDoc *doq, size_t size);
 
     Get root node suitable for xmqForeach.
 */
-XMQNode *xmqGetRootNode(XMQDoc *doq);
+XMQNodePtr xmqGetRootNode(XMQDoc *doq);
 
 /**
     xmqGetImplementationDoc:
@@ -558,6 +559,13 @@ void *xmqGetImplementationDoc(XMQDoc *doq);
     Set the underlying implementation doc, could be an xmlDocPtr from libxml2 for example.
 */
 void xmqSetImplementationDoc(XMQDoc *doq, void *doc);
+
+/**
+    xmqClearDoc:
+
+    Clear out, make the document empty.
+*/
+void xmqClearDoc(XMQDoc *doc);
 
 /**
     xmqFreeDoc:
@@ -616,7 +624,7 @@ void xmqSetEscapeTabs(XMQOutputSettings *os, bool escape_tabs);
 void xmqSetOutputFormat(XMQOutputSettings *os, XMQContentType output_format);
 void xmqSetOmitDecl(XMQOutputSettings *os, bool omit_decl);
 void xmqSetRenderFormat(XMQOutputSettings *os, XMQRenderFormat render_to);
-void xmqSetRenderTheme(XMQOutputSettings *os, const char *theme_name);
+void xmqSetRenderTheme(XMQOutputSettings *os, const char *theme_spec);
 void xmqSetRenderRaw(XMQOutputSettings *os, bool render_raw);
 void xmqSetRenderOnlyStyle(XMQOutputSettings *os, bool only_style);
 void xmqSetWriterContent(XMQOutputSettings *os, XMQWriter content);
@@ -664,13 +672,34 @@ XMQParseError xmqDocErrno(XMQDoc *doc);
     xmqGetName: get name of node
     @node: Node
 */
-const char *xmqGetName(XMQNode *node);
+const char *xmqGetName(XMQNodePtr node);
 
 /**
     xmqGetContent: get content of element node
     @node: Node
 */
-const char *xmqGetContent(XMQNode *node);
+const char *xmqGetContent(XMQNodePtr node);
+
+/**
+    xmqSetContent: set the raw content of element node
+    @node: Node
+*/
+void xmqSetContent(XMQNodePtr node, const char *raw_content);
+
+/**
+    xmqGetNode:
+    @doc: the xmq doc object
+    @xpath: the location of the content to be returned as a node ptr.
+*/
+XMQNodePtr xmqGetNode(XMQDoc *doc, const char *xpath);
+
+/**
+    xmqGetNodeRel:
+    @doc: the xmq doc object
+    @xpath: the location of the content to be returned as a node ptr.
+    @relative: the xpath is search using this node as the starting point.
+*/
+XMQNodePtr xmqGetNodeRel(XMQDoc *doc, const char *xpath, XMQNodePtr relative);
 
 /**
     xmqGetInt:
@@ -685,7 +714,7 @@ int32_t xmqGetInt(XMQDoc *doc, const char *xpath);
     @xpath: the location of the content to be parsed as an 32 bit signed integer.
     @relative: the xpath is search using this node as the starting point.
 */
-int32_t xmqGetIntRel(XMQDoc *doc, const char *xpath, XMQNode *relative);
+int32_t xmqGetIntRel(XMQDoc *doc, const char *xpath, XMQNodePtr relative);
 
 /**
     xmqGetLong:
@@ -700,7 +729,7 @@ int64_t xmqGetLong(XMQDoc *doc, const char *xpath);
     @xpath: the location of the content to be parsed as an 64 bit signed integer.
     @relative: the xpath is search using this node as the starting point.
 */
-int64_t xmqGetLongRel(XMQDoc *doc, const char *xpath, XMQNode *relative);
+int64_t xmqGetLongRel(XMQDoc *doc, const char *xpath, XMQNodePtr relative);
 
 /**
     xmqGetDouble:
@@ -715,7 +744,7 @@ double xmqGetDouble(XMQDoc *doc, const char *xpath);
     @xpath: the location of the content to be parsed as double float.
     @relative: the xpath is search using this node as the starting point.
 */
-double xmqGetDoubleRel(XMQDoc *doc, const char *xpath, XMQNode *relative);
+double xmqGetDoubleRel(XMQDoc *doc, const char *xpath, XMQNodePtr relative);
 
 /**
     xmqGetString:
@@ -730,7 +759,7 @@ const char *xmqGetString(XMQDoc *doc, const char *xpath);
     @xpath: the location of the content to be parsed as string.
     @relative: the xpath is search using this node as the starting point.
 */
-const char *xmqGetStringRel(XMQDoc *doc, const char *xpath, XMQNode *relative);
+const char *xmqGetStringRel(XMQDoc *doc, const char *xpath, XMQNodePtr relative);
 
 /**
    xmqForeach: Find all locations matching the xpath.
@@ -751,7 +780,7 @@ int xmqForeach(XMQDoc *doq, const char *xpath, XMQNodeCallback cb, void *user_da
 
    Returns the number of hits.
 */
-int xmqForeachRel(XMQDoc *doq, const char *xpath, XMQNodeCallback cb, void *user_data, XMQNode *relative);
+int xmqForeachRel(XMQDoc *doq, const char *xpath, XMQNodeCallback cb, void *user_data, XMQNodePtr relative);
 
 /**
    xmqReplaceEntity: Replace the selected entity with the supplied content.
@@ -769,7 +798,7 @@ int xmqReplaceEntity(XMQDoc *doq, const char *entity, const char *content);
 
    Returns the number of replacements.
 */
-int xmqReplaceEntityWithNode(XMQDoc *doq, const char *entity, XMQDoc *idoq, XMQNode *inode);
+int xmqReplaceEntityWithNode(XMQDoc *doq, const char *entity, XMQDoc *idoq, XMQNodePtr inode);
 
 /**
     xmqVersion:

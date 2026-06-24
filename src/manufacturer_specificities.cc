@@ -16,11 +16,15 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include<cstring>
 #include<set>
+
+#include"always.h"
+#include"log.h"
 #include"manufacturers.h"
 #include"manufacturer_specificities.h"
 #include"meters.h"
+
+using namespace std;
 
 std::set<int> diehl_manufacturers = {
     MANUFACTURER_DME,
@@ -366,7 +370,7 @@ void qdsExtractWalkByField(Telegram *t, Meter *driver, DVEntry &mfctEntry, int p
 
     FieldInfo *fieldInfo = driver->findFieldInfo(fieldName, quantity);
     if (fieldInfo == nullptr) {
-        error("(qds) field info not found: %s\n", fieldName.c_str());
+        error(EXIT_DEVICE_ERROR, "(qds) field info not found: %s\n", fieldName.c_str());
     }
 
     fieldInfo->performExtraction(driver, t, &fieldEntry);

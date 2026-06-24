@@ -1,4 +1,4 @@
-/* libxmq - Copyright (C) 2023-2025 Fredrik Öhrström (spdx: MIT)
+/* libxmq - Copyright (C) 2023-2026 Fredrik Öhrström (spdx: MIT)
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -153,10 +153,15 @@ typedef enum XMQColor {
     X(NSD) \
     X(UW) \
     X(XLS) \
+    X(FG) \
+    X(BG) \
 
-#define NUM_XMQ_COLOR_NAMES 13
+#define NUM_XMQ_COLOR_NAMES 15
+#define XMQ_COLOR_FG_INDEX 13
+#define XMQ_COLOR_BG_INDEX 14
 
 const char* colorName(int i);
+int colorShortNameToIndex(const char *name);
 
 typedef struct XMQColorDef {
     int r, g, b;
@@ -242,6 +247,11 @@ struct XMQTheme
     // RGB Sources + bold + underline from which we can configure the strings.
     XMQColorDef colors_darkbg[NUM_XMQ_COLOR_NAMES];
     XMQColorDef colors_lightbg[NUM_XMQ_COLOR_NAMES];
+
+    bool fg_specified;
+    XMQColorDef fg;
+    bool bg_specified;
+    XMQColorDef bg;
 };
 typedef struct XMQTheme XMQTheme;
 
@@ -279,7 +289,41 @@ bool coreParseI64(const char *s, int64_t *out);
 struct XMQTheme;
 typedef struct XMQTheme XMQTheme;
 
-void installDefaultThemeColors(XMQTheme *theme);
+/**
+   A theme_spec looks like this:
+
+   export XMQ_COLORS=C=#ffffff:Q=#ff0000:E=#ff0000
+   This will override the colors for the comments, quotes and entities, for both dark and light modes.
+
+   You can also specify --colors=C=#ffffff:Q=#ff0000:E=#ff0000
+
+   export XMQ_COLORS=dark+C=#ff0000_U:AKV=#00ff00_B,light+E=#000000
+   This will make different overrides for dark and light modes.
+
+   export XMQ_COLORS_moo=dark+C=ffff00:AKV=001122_B,light+E=112233
+   You can now specify --theme=moo and depending on the background moo-dark or moo-light will be used.
+
+   Normally xmq detects wether the background is dark or light.
+   But you can force this with --bg=light or --bg=dark or XMQ_BG=light or XMG_BG=dark
+
+   There are the available colors:
+   C comment
+   Q quote
+   E entity
+   NS name space
+   EN element name with children
+   EK element name as key
+   EKV element key value
+   AK attribute key
+   AKV attribute key value
+   CP composiste parentheses
+   NSD name space declaration
+   UW unicode whitespace
+   XLS the xls namespace
+
+*/
+
+bool installTheme(XMQTheme *theme, const char *theme_spec);
 const char *ansiWin(int i);
 
 #define DEFAULT_THEMES_MODULE
@@ -524,6 +568,8 @@ const char **unicode_lookup_category_parts(const char *name);
 bool unicode_get_category_part(const char *part, int **out_cat, size_t *out_cat_len);
 
 bool category_has_code(int code, int *cat, size_t cat_len);
+
+bool ends_with(const char *start, const char *stop, const char *pattern);
 
 #define TEXT_MODULE
 
@@ -1762,6 +1808,9 @@ extern YaepGrammar *yaepNewGrammar();
    parse progress/state. */
 extern YaepParseRun *yaepNewParseRun(YaepGrammar *g);
 
+/* Reset the parse run for a new parse using yaep/ixml. */
+extern void yaepResetParseRun(YaepParseRun *pr);
+
 /* Set a pointer to a user structure that is available when callbacks are invoked,
    such as read_token when parsing. */
 extern void yaepSetUserData(YaepGrammar *g, void *data);
@@ -2498,7 +2547,9 @@ struct YaepRecoveryState
 struct YaepParseState
 {
     YaepParseRun run;
-    int magic_cookie; // Must be set to 736268273 when the state is created.
+
+    /* Track state of this object. */
+    int magic_cookie;
 
     /* The input token array to be parsed. */
     YaepInputToken *input;
@@ -2725,8 +2776,14 @@ struct YaepParseState
 };
 typedef struct YaepParseState YaepParseState;
 
-#define CHECK_PARSE_STATE_MAGIC(ps) (ps->magic_cookie == 736268273)
-#define INSTALL_PARSE_STATE_MAGIC(ps) ps->magic_cookie=736268273
+#define PARSE_INIT_MAGIC(ps) ps->magic_cookie=0x11223344
+#define CAN_PARSE_STATE_MAGIC(ps) (ps->magic_cookie == 0x11223344)
+#define PARSE_START_MAGIC(ps) ps->magic_cookie=0x55555555
+#define PARSE_STOP_MAGIC(ps) ps->magic_cookie=0x66666666
+#define CAN_FREE_STATE_MAGIC(ps) (ps->magic_cookie == 0x11223344 || \
+                                  ps->magic_cookie == 0x55555555 ||     \
+                                  ps->magic_cookie == 0x66666666)
+#define PARSE_FREE_MAGIC(ps) ps->magic_cookie=0xdeadbeef
 
 struct StateVars;
 typedef struct StateVars StateVars;
@@ -3019,11 +3076,6 @@ typedef struct XMQParseState XMQParseState;
 
 #define MAGIC_COOKIE 7287528
 
-struct XMQNode
-{
-    xmlNodePtr node;
-};
-
 struct XMQDoc
 {
     union {
@@ -3033,7 +3085,7 @@ struct XMQDoc
     const char *source_name_; // File name or url from which the documented was fetched.
     int errno_; // A parse error is assigned a number.
     const char *error_; // And the error is explained here.
-    XMQNode root_; // The root node.
+    XMQNodePtr root_; // The root node.
     XMQContentType original_content_type_; // Remember if this document was created from xmq/xml etc.
     size_t original_size_; // Remember the original source size of the document it was loaded from.
 
@@ -3044,7 +3096,7 @@ struct XMQDoc
     // ['a'-'z'] shrinks down to ['a';'b']
     YaepParseRun *yaep_parse_run_; // The currently executing parse variables.
     YaepGrammar *yaep_grammar_; // The yaep grammar to be used by the run.
-    XMQParseState *yaep_parse_state_; // The parse state used to parse the ixml grammar.
+    XMQParseState *xmq_parse_state_; // The parse state used to parse the ixml grammar.
 };
 
 #ifdef __cplusplus
@@ -3097,7 +3149,8 @@ struct XMQOutputSettings
     XMQRenderFormat render_to;
     bool render_raw;
     bool only_style;
-    const char *render_theme;
+    // For example lightbg:C=ff0000_U:AKV=00ffff:nl=' '
+    const char *render_theme_spec;
 
     XMQWriter content;
     XMQWriter error;
@@ -3475,7 +3528,7 @@ void xmq_setup_parse_callbacks(XMQParseCallbacks *callbacks);
 void xmq_set_yaep_grammar(XMQDoc *doc, YaepGrammar *g);
 YaepGrammar *xmq_get_yaep_grammar(XMQDoc *doc);
 YaepParseRun *xmq_get_yaep_parse_run(XMQDoc *doc);
-XMQParseState *xmq_get_yaep_parse_state(XMQDoc *doc);
+XMQParseState *xmq_get_xmq_parse_state(XMQDoc *doc);
 
 void set_node_namespace(XMQParseState *state, xmlNodePtr node, const char *node_name);
 
@@ -3566,7 +3619,8 @@ void ixml_print_grammar(XMQParseState *state);
 void add_key_number(xmlDoc *doc, xmlNode *root, const char *key, int number);
 void add_key_string(xmlDoc *doc, xmlNode *root, const char *key, const char *value);
 void add_nl(XMQParseState *state);
-XMQProceed catch_single_content(XMQDoc *doc, XMQNode *node, void *user_data);
+XMQProceed catch_single_content(XMQDoc *doc, XMQNodePtr node, void *user_data);
+XMQProceed catch_single_node(XMQDoc *doc, XMQNodePtr node, void *user_data);
 size_t calculate_buffer_size(const char *start, const char *stop, int indent, const char *pre_line, const char *post_line);
 bool check_leading_space_nl(const char *start, const char *stop);
 void copy_and_insert(MemBuffer *mb, const char *start, const char *stop, int num_prefix_spaces, const char *implicit_indentation, const char *explicit_space, const char *newline, const char *prefix_line, const char *postfix_line);
@@ -3574,6 +3628,7 @@ char *copy_lines(int num_prefix_spaces, const char *start, const char *stop, int
 void copy_quote_settings_from_output_settings(XMQQuoteSettings *qs, XMQOutputSettings *os);
 xmlNodePtr create_entity(XMQParseState *state, size_t l, size_t c, const char *cstart, const char *cstop, const char*stop, xmlNodePtr parent);
 void create_node(XMQParseState *state, const char *start, const char *stop);
+xmlNsPtr find_ns(xmlNodePtr node, const xmlChar *prefix);
 void update_namespace_href(XMQParseState *state, xmlNsPtr ns, const char *start, const char *stop);
 xmlNodePtr create_quote(XMQParseState *state, size_t l, size_t col, const char *start, const char *stop, const char *suffix,  xmlNodePtr parent);
 void debug_content_comment(XMQParseState *state, size_t line, size_t start_col, const char *start, const char *stop, const char *suffix);
@@ -3674,25 +3729,25 @@ void xmqSetupDefaultColors(XMQOutputSettings *os)
 {
     bool dark_mode = os->bg_dark_mode;
     XMQTheme *theme = os->theme;
-    if (os->render_theme == NULL)
+    if (os->render_theme_spec == NULL)
     {
         if (os->render_to == XMQ_RENDER_TEX) dark_mode = false;
-        os->render_theme = dark_mode?"darkbg":"lightbg";
+        os->render_theme_spec = dark_mode?"dark":"light";
     }
     else
     {
-        if (!strcmp(os->render_theme, "darkbg"))
+        if (ends_with(os->render_theme_spec, NULL, "-dark"))
         {
             dark_mode = true;
         }
-        else if (!strcmp(os->render_theme, "lightbg"))
+        if (ends_with(os->render_theme_spec, NULL, "-light"))
         {
             dark_mode = false;
         }
     }
 
-    verbose("xmq=", "use theme %s", os->render_theme);
-    installDefaultThemeColors(theme);
+    verbose("xmq=", "use theme %s", os->render_theme_spec);
+    installTheme(theme, os->render_theme_spec);
 
     os->indentation_space = theme->indentation_space; // " ";
     os->explicit_space = theme->explicit_space; // " ";
@@ -3845,11 +3900,62 @@ void setup_html_coloring(XMQOutputSettings *os, XMQTheme *theme, bool dark_mode,
         MemBuffer *style_pre = new_membuffer();
 
         membuffer_append(style_pre,
-
                          "@media screen and (orientation: portrait) { pre { font-size: 2vw; } }"
-                         "@media screen and (orientation: landscape) { pre { max-width: 98%; } }"
-                         "pre.xmq_dark {white-space:pre-wrap;word-break:break-all;border-radius:2px;background-color:#263338;border:solid 1px #555555;display:inline-block;padding:1em;color:white;}\n"
-                         "pre.xmq_light{white-space:pre-wrap;word-break:break-all;border-radius:2px;background-color:#ffffcc;border:solid 1px #888888;display:inline-block;padding:1em;color:black;}\n"
+                         "@media screen and (orientation: landscape) { pre { max-width: 98%; } }");
+
+        // Setup CSS for dark mode
+        membuffer_append(style_pre, "pre.xmq_dark {white-space:pre-wrap;word-break:break-all;border-radius:2px;background-color:#");
+
+        // Lookup the bg color in dark....
+        XMQColorDef *def = &theme->colors_darkbg[XMQ_COLOR_BG_INDEX];
+        if (def->r == -1) membuffer_append(style_pre, "263338"); // No override, use default.
+        else
+        {
+            // BG override in dark mode use it.
+            char buf[7];
+            snprintf(buf, 7, "%02x%02x%02x", def->r, def->g, def->b);
+            membuffer_append(style_pre, buf);
+        }
+        membuffer_append(style_pre,    ";border:solid 1px #555555;display:inline-block;padding:1em;color:#");
+
+        // Lookup the fg color in dark....
+        def = &theme->colors_darkbg[XMQ_COLOR_FG_INDEX];
+        if (def->r == -1) membuffer_append(style_pre, "ffffff");
+        else
+        {
+            char buf[7];
+            snprintf(buf, 7, "%02x%02x%02x", def->r, def->g, def->b);
+            membuffer_append(style_pre, buf);
+        }
+        membuffer_append(style_pre,";}\n");
+
+        // Setup CSS for light mode
+        membuffer_append(style_pre, "pre.xmq_light{white-space:pre-wrap;word-break:break-all;border-radius:2px;background-color:#");
+
+        // Lookup the bg color in light....
+        def = &theme->colors_lightbg[XMQ_COLOR_BG_INDEX];
+        if (def->r == -1) membuffer_append(style_pre, "ffffcc"); // No override, use default.
+        else
+        {
+            // BG override in dark mode use it.
+            char buf[7];
+            snprintf(buf, 7, "%02x%02x%02x", def->r, def->g, def->b);
+            membuffer_append(style_pre, buf);
+        }
+        membuffer_append(style_pre, ";border:solid 1px #888888;display:inline-block;padding:1em;color:#");
+
+        // Lookup the fg color in dark....
+        def = &theme->colors_darkbg[XMQ_COLOR_FG_INDEX];
+        if (def->r == -1) membuffer_append(style_pre, "000000");
+        else
+        {
+            char buf[7];
+            snprintf(buf, 7, "%02x%02x%02x", def->r, def->g, def->b);
+            membuffer_append(style_pre, buf);
+        }
+        membuffer_append(style_pre,";}\n");
+
+        membuffer_append(style_pre,
                          "body.xmq_dark {background-color:black;}\n"
                          "body.xmq_light {}\n");
 
@@ -4276,9 +4382,9 @@ void xmqSetRenderRaw(XMQOutputSettings *os, bool render_raw)
     os->render_raw = render_raw;
 }
 
-void xmqSetRenderTheme(XMQOutputSettings *os, const char *theme_name)
+void xmqSetRenderTheme(XMQOutputSettings *os, const char *theme_spec)
 {
-    os->render_theme = theme_name;
+    os->render_theme_spec = theme_spec;
 }
 
 void xmqSetRenderOnlyStyle(XMQOutputSettings *os, bool only_style)
@@ -5060,11 +5166,11 @@ char *xmq_trim_quote(const char *start, const char *stop, bool is_xmq, bool is_c
             if (*i == ' ')
             {
                 size_t n = incidental;
-                assert(found_indent >= incidental);
+                //assert(found_indent >= incidental);
                 while (n > 0)
                 {
                     char c = *i;
-                    assert(c == ' ');
+                    if (c != ' ') break;
                     i++;
                     n--;
                 }
@@ -5273,9 +5379,9 @@ void xmqSetOriginalSize(XMQDoc *doq, size_t size)
     doq->original_size_ = size;
 }
 
-XMQNode *xmqGetRootNode(XMQDoc *doq)
+XMQNodePtr xmqGetRootNode(XMQDoc *doq)
 {
-    return &doq->root_;
+    return doq->root_;
 }
 
 void xmqFreeParseCallbacks(XMQParseCallbacks *cb)
@@ -5331,6 +5437,33 @@ void xmqFreeParseState(XMQParseState *state)
     free(state);
 }
 
+void xmqClearDoc(XMQDoc *doq)
+{
+    if (!doq) return;
+    if (doq->error_)
+    {
+        debug("xmq=", "freeing error message");
+        free((void*)doq->error_);
+        doq->error_ = NULL;
+    }
+    if (doq->docptr_.xml)
+    {
+        debug("xmq=", "freeing xml doc");
+        xmlFreeDoc(doq->docptr_.xml);
+        doq->docptr_.xml = xmlNewDoc((const xmlChar*)"1.0");
+    }
+    if (doq->yaep_grammar_)
+    {
+        yaepFreeGrammar (doq->yaep_parse_run_, doq->yaep_grammar_);
+        yaepFreeParseRun (doq->yaep_parse_run_);
+        xmqFreeParseState(doq->xmq_parse_state_);
+        doq->yaep_grammar_ = NULL;
+        doq->yaep_parse_run_ = NULL;
+        doq->xmq_parse_state_ = NULL;
+    }
+    debug("xmq=", "clearing xmq doc");
+}
+
 void xmqFreeDoc(XMQDoc *doq)
 {
     if (!doq) return;
@@ -5356,10 +5489,10 @@ void xmqFreeDoc(XMQDoc *doq)
     {
         yaepFreeGrammar (doq->yaep_parse_run_, doq->yaep_grammar_);
         yaepFreeParseRun (doq->yaep_parse_run_);
-        xmqFreeParseState(doq->yaep_parse_state_);
+        xmqFreeParseState(doq->xmq_parse_state_);
         doq->yaep_grammar_ = NULL;
         doq->yaep_parse_run_ = NULL;
-        doq->yaep_parse_state_ = NULL;
+        doq->xmq_parse_state_ = NULL;
     }
 
     debug("xmq=", "freeing xmq doc");
@@ -5509,7 +5642,7 @@ bool xmqParseFile(XMQDoc *doq, const char *file, const char *implicit_root, int 
 
 const char *xmqVersion()
 {
-    return "4.0.1-modified";
+    return "4.1.0-modified";
 }
 
 void do_whitespace(XMQParseState *state,
@@ -5836,7 +5969,7 @@ void do_ns_declaration(XMQParseState *state,
                        const char *stop,
                        const char *suffix)
 {
-    // We found a namespace. It is either a default declaration xmlns=... or xmlns:prefix=...
+    // We found a namespace declaration attribute. It is either a default declaration xmlns=... or xmlns:prefix=...
     //
     // We can see the difference here since the parser will invoke with suffix
     // either pointing to stop (xmlns=) or after stop (xmlns:foo=)
@@ -5880,26 +6013,31 @@ void do_ns_declaration(XMQParseState *state,
         // The prefix starts at stop+1.
         size_t len = suffix-(stop+1);
         char *name = strndup(stop+1, len);
-        ns = xmlNewNs(element,
-                      NULL,
-                      (const xmlChar *)name);
 
-        if (!ns)
+        ns = find_ns(element, (const xmlChar*)name);
+        if (!ns) {
+            // This should be the only lookup, but it fails to find the incomplete namespaces without uri...
+            // But it finds the xml namespace.
+            ns = xmlSearchNs(element->doc,
+                             element,
+                             (const xmlChar *)name);
+        }
+
+        if (ns)
         {
-            // Oups, this namespace has already been created, for example due to the namespace prefix
+            // Oups, this exact namespace has already been created, for example due to the namespace prefix
             // of the element itself, eg: abc:element(xmlns:abc = uri)
+            // or from an attribute elment(gurka:alfa = 123 xmlns:gurka = uri)
             // Lets pick this ns up and reuse it.
-            xmlNsPtr *list = xmlGetNsList(state->doq->docptr_.xml,
-                                          element);
-            for (int i = 0; list[i]; ++i)
-            {
-                if (list[i]->prefix && !strcmp((char*)list[i]->prefix, name))
-                {
-                    ns = list[i];
-                    break;
-                }
-            }
-            free(list);
+            debug("xmq=", "found existing element namespace for xmlns:%s", name);
+        }
+        else
+        {
+            // Not used before, create a new namespace.
+            ns = xmlNewNs(element,
+                          NULL,
+                          (const xmlChar *)name);
+            debug("xmq=", "created new namespace declaration xmlns:%s", name);
         }
         free(name);
     }
@@ -5911,6 +6049,22 @@ void do_ns_declaration(XMQParseState *state,
     }
     state->declaring_xmlns = true;
     state->declaring_xmlns_namespace = ns;
+}
+
+xmlNsPtr find_ns(xmlNodePtr node, const xmlChar *prefix)
+{
+    for (xmlNodePtr cur = node; cur; cur = cur->parent)
+    {
+        for (xmlNsPtr ns = cur->nsDef; ns; ns = ns->next)
+        {
+            if ((prefix == NULL && ns->prefix == NULL) ||
+                (prefix && ns->prefix && xmlStrEqual(prefix, ns->prefix)))
+            {
+                return ns;
+            }
+        }
+    }
+    return NULL;
 }
 
 void do_attr_key(XMQParseState *state,
@@ -5935,16 +6089,27 @@ void do_attr_key(XMQParseState *state,
     }
     else
     {
-        xmlNsPtr ns = xmlSearchNs(state->doq->docptr_.xml,
-                                  parent,
-                                  (const xmlChar *)state->attribute_namespace);
-        if (!ns)
+        xmlNsPtr ns = find_ns(parent, (const xmlChar *)state->attribute_namespace);
+        if (!ns) {
+            // This should be the only lookup, but it fails to find the incomplete namespaces without uri...
+            // But it finds the xml namespace.
+            ns = xmlSearchNs(parent->doc,
+                             parent,
+                             (const xmlChar *)state->attribute_namespace);
+        }
+
+        if (ns)
+        {
+            debug("xmq=", "found existing namespace for attribute %s:%s inside %s", state->attribute_namespace, key, parent->name);
+        }
+        else
         {
             // The namespaces does not yet exist. Lets create it.. Lets hope it will be declared
             // inside the attributes of this node. Use a temporary href for now.
             ns = xmlNewNs(parent,
                           NULL,
                           (const xmlChar *)state->attribute_namespace);
+            debug("xmq=", "created new namespace for attribute %s:%s inside %s", state->attribute_namespace, key, parent->name);
         }
         attr = xmlNewNsProp(parent, ns, (xmlChar*)key, NULL);
         free(state->attribute_namespace);
@@ -5967,7 +6132,7 @@ void update_namespace_href(XMQParseState *state,
 
     char *href = strndup(start, stop-start);
     ns->href = (const xmlChar*)href;
-    debug("xmq=", "update namespace prefix=%s with href=%s", ns->prefix, href);
+    debug("xmq=", "update namespace %s with href=%s", ns->prefix, ns->href);
 
     if (start[0] == 0 && ns == state->default_namespace)
     {
@@ -5989,7 +6154,6 @@ void do_attr_value_text(XMQParseState *state,
     if (state->declaring_xmlns)
     {
         assert(state->declaring_xmlns_namespace);
-
         update_namespace_href(state, (xmlNsPtr)state->declaring_xmlns_namespace, start, stop);
         state->declaring_xmlns = false;
         state->declaring_xmlns_namespace = NULL;
@@ -6073,7 +6237,7 @@ void create_node(XMQParseState *state, const char *start, const char *stop)
                 // Then create the root node with name.
                 state->element_last = new_node;
                 xmlDocSetRootElement(state->doq->docptr_.xml, new_node);
-                state->doq->root_.node = new_node;
+                state->doq->root_ = new_node;
             }
             else
             {
@@ -6081,7 +6245,7 @@ void create_node(XMQParseState *state, const char *start, const char *stop)
                 xmlNodePtr root = xmlNewDocNode(state->doq->docptr_.xml, NULL, (const xmlChar *)state->implicit_root, NULL);
                 state->element_last = root;
                 xmlDocSetRootElement(state->doq->docptr_.xml, root);
-                state->doq->root_.node = root;
+                state->doq->root_ = root;
                 stack_push(state->element_stack, state->element_last);
             }
         }
@@ -7350,15 +7514,15 @@ int xmqForeach(XMQDoc *doq, const char *xpath, XMQNodeCallback cb, void *user_da
     return xmqForeachRel(doq, xpath, cb, user_data, NULL);
 }
 
-int xmqForeachRel(XMQDoc *doq, const char *xpath, XMQNodeCallback cb, void *user_data, XMQNode *relative)
+int xmqForeachRel(XMQDoc *doq, const char *xpath, XMQNodeCallback cb, void *user_data, XMQNodePtr relative)
 {
     xmlDocPtr doc = (xmlDocPtr)xmqGetImplementationDoc(doq);
     xmlXPathContextPtr ctx = xmlXPathNewContext(doc);
     if (!ctx) return 0;
 
-    if (relative && relative->node)
+    if (relative)
     {
-        xmlXPathSetContextNode(relative->node, ctx);
+        xmlXPathSetContextNode((xmlNodePtr)relative, ctx);
     }
 
     xmlXPathObjectPtr objects = xmlXPathEvalExpression((const xmlChar*)xpath, ctx);
@@ -7377,9 +7541,7 @@ int xmqForeachRel(XMQDoc *doq, const char *xpath, XMQNodeCallback cb, void *user
         for(int i = 0; i < size; i++)
         {
             xmlNodePtr node = nodes->nodeTab[i];
-            XMQNode xn;
-            xn.node = node;
-            XMQProceed proceed = cb(doq, &xn, user_data);
+            XMQProceed proceed = cb(doq, node, user_data);
             if (proceed == XMQ_STOP) break;
         }
     }
@@ -7390,9 +7552,9 @@ int xmqForeachRel(XMQDoc *doq, const char *xpath, XMQNodeCallback cb, void *user
     return size;
 }
 
-const char *xmqGetName(XMQNode *node)
+const char *xmqGetName(XMQNodePtr node)
 {
-    xmlNodePtr p = node->node;
+    xmlNodePtr p = (xmlNodePtr)node;
     if (p)
     {
         return (const char*)p->name;
@@ -7400,9 +7562,9 @@ const char *xmqGetName(XMQNode *node)
     return NULL;
 }
 
-const char *xmqGetContent(XMQNode *node)
+const char *xmqGetContent(XMQNodePtr node)
 {
-    xmlNodePtr p = node->node;
+    xmlNodePtr p = (xmlNodePtr)node;
     if (p && p->children)
     {
         return (const char*)p->children->content;
@@ -7410,10 +7572,17 @@ const char *xmqGetContent(XMQNode *node)
     return NULL;
 }
 
-XMQProceed catch_single_content(XMQDoc *doc, XMQNode *node, void *user_data)
+void xmqSetContent(XMQNodePtr node, const char *raw_content)
+{
+    xmlNodePtr n = (xmlNodePtr)node;
+    xmlNodeSetContent(n, NULL);
+    xmlNodeAddContent(n, (const xmlChar*)raw_content);
+}
+
+XMQProceed catch_single_content(XMQDoc *doc, XMQNodePtr node, void *user_data)
 {
     const char **out = (const char **)user_data;
-    xmlNodePtr n = node->node;
+    xmlNodePtr n = (xmlNodePtr)node;
     if (n && n->children)
     {
         *out = (const char*)n->children->content;
@@ -7425,12 +7594,34 @@ XMQProceed catch_single_content(XMQDoc *doc, XMQNode *node, void *user_data)
     return XMQ_STOP;
 }
 
+XMQProceed catch_single_node(XMQDoc *doc, XMQNodePtr node, void *user_data)
+{
+    XMQNodePtr *out = (XMQNodePtr*)user_data;
+    xmlNodePtr n = (xmlNodePtr)node;
+    *out = n;
+    return XMQ_STOP;
+}
+
+XMQNodePtr xmqGetNode(XMQDoc *doq, const char *xpath)
+{
+    return xmqGetNodeRel(doq, xpath, NULL);
+}
+
+XMQNodePtr xmqGetNodeRel(XMQDoc *doq, const char *xpath, XMQNodePtr relative)
+{
+    XMQNodePtr node = NULL;
+
+    xmqForeachRel(doq, xpath, catch_single_node, (void*)&node, relative);
+
+    return node;
+}
+
 int32_t xmqGetInt(XMQDoc *doq, const char *xpath)
 {
     return xmqGetIntRel(doq, xpath, NULL);
 }
 
-int32_t xmqGetIntRel(XMQDoc *doq, const char *xpath, XMQNode *relative)
+int32_t xmqGetIntRel(XMQDoc *doq, const char *xpath, XMQNodePtr relative)
 {
     const char *content = NULL;
 
@@ -7459,7 +7650,7 @@ int64_t xmqGetLong(XMQDoc *doq, const char *xpath)
     return xmqGetLongRel(doq, xpath, NULL);
 }
 
-int64_t xmqGetLongRel(XMQDoc *doq, const char *xpath, XMQNode *relative)
+int64_t xmqGetLongRel(XMQDoc *doq, const char *xpath, XMQNodePtr relative)
 {
     const char *content = NULL;
 
@@ -7488,7 +7679,7 @@ const char *xmqGetString(XMQDoc *doq, const char *xpath)
     return xmqGetStringRel(doq, xpath, NULL);
 }
 
-const char *xmqGetStringRel(XMQDoc *doq, const char *xpath, XMQNode *relative)
+const char *xmqGetStringRel(XMQDoc *doq, const char *xpath, XMQNodePtr relative)
 {
     const char *content = NULL;
 
@@ -7502,7 +7693,7 @@ double xmqGetDouble(XMQDoc *doq, const char *xpath)
     return xmqGetDoubleRel(doq, xpath, NULL);
 }
 
-double xmqGetDoubleRel(XMQDoc *doq, const char *xpath, XMQNode *relative)
+double xmqGetDoubleRel(XMQDoc *doq, const char *xpath, XMQNodePtr relative)
 {
     const char *content = NULL;
 
@@ -7606,7 +7797,7 @@ bool xmq_parse_buffer_text(XMQDoc *doq, const char *start, const char *stop, con
         // We have an implicit root must be created since input is text.
         xmlNodePtr root = xmlNewDocNode(doq->docptr_.xml, NULL, (const xmlChar *)implicit_root, NULL);
         xmlDocSetRootElement(doq->docptr_.xml, root);
-        doq->root_.node = root;
+        doq->root_ = root;
         xmlAddChild(root, text);
     }
     else
@@ -7851,7 +8042,7 @@ bool xmq_parse_buffer_ixml(XMQDoc *ixml_grammar,
     YaepParseRun *run = yaepNewParseRun(grammar);
     ixml_grammar->yaep_grammar_ = grammar;
     ixml_grammar->yaep_parse_run_ = run;
-    ixml_grammar->yaep_parse_state_ = state;
+    ixml_grammar->xmq_parse_state_ = state;
     if (xmqVerbose()) run->verbose = true;
     if (xmqDebugging()) run->debug = run->verbose = true;
     if (xmqTracing()) run->trace = run->debug = run->verbose = true;
@@ -7873,7 +8064,8 @@ bool xmq_parse_buffer_ixml(XMQDoc *ixml_grammar,
         ixml_grammar->error_ = build_error_message("%s\n", xmqStateErrorMsg(state));
     }
 
-    // Do not free the state, it must be kept alive with the doc
+    // Do not free the xmq state, the yaep run nor the state,
+    // it must be kept alive with the doc
     xmqFreeParseCallbacks(parse);
     xmqFreeOutputSettings(os);
 
@@ -7895,9 +8087,9 @@ YaepParseRun *xmq_get_yaep_parse_run(XMQDoc *doc)
     return doc->yaep_parse_run_;
 }
 
-XMQParseState *xmq_get_yaep_parse_state(XMQDoc *doc)
+XMQParseState *xmq_get_xmq_parse_state(XMQDoc *doc)
 {
-    return doc->yaep_parse_state_;
+    return doc->xmq_parse_state_;
 }
 
 void add_key_number(xmlDoc *doc, xmlNode *root, const char *key, int value)
@@ -8129,6 +8321,7 @@ void generate_dom_from_yaep_node(xmlDocPtr doc, xmlNodePtr node, YaepTreeNode *n
         if (node == NULL)
         {
             new_node = xmlNewDocNode(doc, NULL, (xmlChar*)"AMBIGUOUS", NULL);
+            assert(xmlDocGetRootElement(doc) == NULL);
             xmlDocSetRootElement(doc, new_node);
         }
         else
@@ -8192,10 +8385,12 @@ void generate_dom_from_yaep_node(xmlDocPtr doc, xmlNodePtr node, YaepTreeNode *n
 
 bool xmqParseBufferWithIXML(XMQDoc *doc, const char *start, const char *stop, XMQDoc *ixml_grammar, int flags)
 {
+    bool ok = false;
+
     if (!doc || !start || !ixml_grammar) return false;
     if (!stop) stop = start+strlen(start);
 
-    XMQParseState *state = xmq_get_yaep_parse_state(ixml_grammar);
+    XMQParseState *state = xmq_get_xmq_parse_state(ixml_grammar);
 
     // Now add all character terminals in the content (not yet added) to the grammar.
     // And rewrite charsets into rules with multiple choice shrunk to the actual usage of characters in the input.
@@ -8246,6 +8441,9 @@ bool xmqParseBufferWithIXML(XMQDoc *doc, const char *start, const char *stop, XM
     }
 
     YaepParseRun *run = xmq_get_yaep_parse_run(ixml_grammar);
+    // If we are compiling again with the same grammar.
+    yaepResetParseRun(run);
+
     run->buffer_start = start;
     run->buffer_stop = stop;
     run->buffer_i = start;
@@ -8259,29 +8457,55 @@ bool xmqParseBufferWithIXML(XMQDoc *doc, const char *start, const char *stop, XM
     if (rc)
     {
         // There was an error, pick the generated error tree.
-        xmlFreeDoc(doc->docptr_.xml);
-        xmqSetImplementationDoc(doc, run->failure->docptr_.xml);
-        xmqSetImplementationDoc(run->failure, NULL);
+        if (flags & XMQ_FLAG_IXML_FAIL_SILENT)
+        {
+            // Create an empty document.
+            xmqClearDoc(doc);
+
+            // Free the unused failure document.
+            xmlFreeDoc(run->failure->docptr_.xml);
+            xmqSetImplementationDoc(run->failure, NULL);
+            ok = false;
+        }
+        else
+        {
+            xmlFreeDoc(doc->docptr_.xml);
+            // Copy the generated failure document as output.
+            xmqSetImplementationDoc(doc, run->failure->docptr_.xml);
+            xmqSetImplementationDoc(run->failure, NULL);
+            ok = false;
+        }
     }
     else
     {
         // IXML parse was fine, generate a DOM from the yaep tree.
         generate_dom_from_yaep_node(doc->docptr_.xml, NULL, run->root, NULL, 0, 0);
+        ok = true;
     }
 
     if (run->ambiguous_p)
     {
         xmlNodePtr element = xmlDocGetRootElement(doc->docptr_.xml);
-        xmlNsPtr ns = xmlNewNs(element,
-                               (const xmlChar *)"http://invisiblexml.org/NS",
-                               (const xmlChar *)"ixml");
-
-        xmlSetNsProp(element, ns, (xmlChar*)"state", (xmlChar*)"ambiguous");
+        xmlNsPtr ns = xmlSearchNs(doc->docptr_.xml, element, (const xmlChar *)"ixml");
+        if (ns == NULL)
+        {
+            ns = xmlNewNs(element,
+                          (const xmlChar *)"http://invisiblexml.org/NS",
+                          (const xmlChar *)"ixml");
+        }
+        // This should be set with the namespace ixml, however a memory leak triggers then....
+        // Temporary workaround use xmlSetProp instead.
+        // xmlSetNsProp(element, ns, (xmlChar*)"state", (xmlChar*)"ambiguous");
+        xmlSetProp(element, (xmlChar*)"state", (xmlChar*)"ambiguous");
     }
 
-    if (run->root) yaepFreeTree(run->root, NULL, NULL);
+    if (run->root)
+    {
+        yaepFreeTree(run->root, NULL, NULL);
+        run->root = NULL;
+    }
 
-    return true;
+    return ok;
 }
 
 bool xmqParseFileWithIXML(XMQDoc *doc, const char *file_name, XMQDoc *ixml_grammar, int flags)
@@ -8853,11 +9077,16 @@ bool string_to_color_def(const char *s, XMQColorDef *def)
     // #aabbcc_U
     // #aabbcc_B_U
 
+    // "" the empty string translates into def with -1 -1 -1 as rgb values.
+    // used to identify
+
     def->r = -1;
     def->g = -1;
     def->b = -1;
     def->bold = false;
     def->underline = false;
+
+    if (s[0] == 0) return true;
 
     int r, g, b;
     bool bold, underline;
@@ -8999,11 +9228,18 @@ bool generate_tex_color(char *buf, size_t buf_size, XMQColorDef *def, const char
 
     if (buf_size < 128) return false;
 
-    snprintf(buf, buf_size, "\\definecolor{%s}{RGB}{%d,%d,%d}", name, def->r, def->g, def->b);
+    if (def->r < 0)
+    {
+        snprintf(buf, buf_size, "\\definecolor{%s}{RGB}{%d,%d,%d}", name, 0, 0, 0);
+    }
+    else
+    {
+        snprintf(buf, buf_size, "\\definecolor{%s}{RGB}{%d,%d,%d}", name, def->r, def->g, def->b);
+    }
     return true;
 }
 
-const char *color_names[13] = {
+const char *color_names[15] = {
     "xmqC", // Comment
     "xmqQ", // Quote
     "xmqE", // Entity
@@ -9017,11 +9253,33 @@ const char *color_names[13] = {
     "xmqNSD", // Name Space declaration xmlns
     "xmqUW", // Unicode whitespace
     "xmqXSL", // Element color for xsl transform elements.
+    "xmqFG", // Foreground color
+    "xmqBG", // Background color
 };
 
 const char* colorName(int i)
 {
     return color_names[i];
+}
+
+int colorShortNameToIndex(const char *name)
+{
+    if (!strcmp(name, "C")) return 0; // Comment
+    if (!strcmp(name, "Q")) return 1; // Quote
+    if (!strcmp(name, "E")) return 2; // Entity
+    if (!strcmp(name, "NS")) return 3; // Name Space (both for element and attribute)
+    if (!strcmp(name, "EN")) return 4; // Element Name
+    if (!strcmp(name, "EK")) return 5; // Element Key
+    if (!strcmp(name, "EKV")) return 6; // Element Key Value
+    if (!strcmp(name, "AK")) return 7; // Attribute Key
+    if (!strcmp(name, "AKV")) return 8; // Attribute Key Value
+    if (!strcmp(name, "CP")) return 9; // Compound Parentheses
+    if (!strcmp(name, "NSD")) return 10; // Name Space declaration xmlns
+    if (!strcmp(name, "UW")) return 11; // Unicode whitespace
+    if (!strcmp(name, "XSL")) return 12; // Element color for xsl transform elements.
+    if (!strcmp(name, "FG")) return 13; // Foreground color
+    if (!strcmp(name, "BG")) return 14; // Background color
+    return -1;
 }
 
 void setColorDef(XMQColorDef *cd, int r, int g, int b, bool bold, bool underline);
@@ -9094,7 +9352,10 @@ bool coreParseI64(const char *s, int64_t *out)
 
 #ifdef DEFAULT_THEMES_MODULE
 
-const char *defaultColor(int i, const char *theme_name);
+const char *default_color(int i, const char *theme_name);
+void install_default_colors(XMQTheme *theme);
+bool install_single_color(XMQTheme *theme, const char *name, const char *color, bool dark, bool light);
+bool install_theme(XMQTheme *theme, const char *single_theme);
 
 const char *default_darkbg_colors[NUM_XMQ_COLOR_NAMES] = {
     "#2aa1b3", // XMQ_COLOR_C
@@ -9109,7 +9370,9 @@ const char *default_darkbg_colors[NUM_XMQ_COLOR_NAMES] = {
     "#c061cb", // XMQ_COLOR_CP
     "#2aa1b3", // XMQ_COLOR_NSD
     "#880000_U", // XMQ_COLOR_UW
-    "#c061cb" // XMQ_COLOR_XSL
+    "#c061cb", // XMQ_COLOR_XSL
+    "", // XMQ_COLOR_FG
+    "" // XMQ_COLOR_BG
 };
 
 const char *win_darkbg_ansi[NUM_XMQ_COLOR_NAMES] = {
@@ -9126,6 +9389,8 @@ const char *win_darkbg_ansi[NUM_XMQ_COLOR_NAMES] = {
     "\033[36m\033[24m", // XMQ_COLOR_NSD --- LIGHT BLUE
     "\033[91m\033[4m", // XMQ_COLOR_UW --- RED UNDERLINE
     "\033[95m\033[24m", // XMQ_COLOR_XSL -- MAGENTA
+    "", // XMQ_COLOR_FG
+    "" // XMQ_COLOR_BG
 };
 
 const char *default_lightbg_colors[NUM_XMQ_COLOR_NAMES] = {
@@ -9141,7 +9406,9 @@ const char *default_lightbg_colors[NUM_XMQ_COLOR_NAMES] = {
     "#c061cb", // XMQ_COLOR_CP
     "#1a91a3", // XMQ_COLOR_NSD
     "#880000_U", // XMQ_COLOR_UW
-    "#c061cb" // XMQ_COLOR_XSL
+    "#c061cb", // XMQ_COLOR_XSL
+    "", // XMQ_COLOR_FG
+    "" // XMQ_COLOR_BG
 };
 
 const char *ansiWin(int i)
@@ -9149,27 +9416,131 @@ const char *ansiWin(int i)
     return win_darkbg_ansi[i];
 }
 
-const char *defaultColor(int i, const char *theme_name)
+const char *default_color(int i, const char *theme_name)
 {
-    if (!strcmp(theme_name, "lightbg")) return default_lightbg_colors[i];
+    if (!strcmp(theme_name, "light")) return default_lightbg_colors[i];
     return default_darkbg_colors[i];
 }
 
-void installDefaultThemeColors(XMQTheme *theme)
+bool install_single_color(XMQTheme *theme, const char *name, const char *color, bool dark, bool light)
 {
+    bool ok = true;
+
+    if (dark)
+    {
+        XMQColorDef *colors = theme->colors_darkbg;
+        int i = colorShortNameToIndex(name);
+        if (i < 0) return false;
+        ok &= string_to_color_def(color, &colors[i]);
+    }
+
+    if (light)
+    {
+        XMQColorDef *colors = theme->colors_lightbg;
+        int i = colorShortNameToIndex(name);
+        if (i < 0) return false;
+        ok &= string_to_color_def(color, &colors[i]);
+    }
+
+    return ok;
+}
+
+void install_default_colors(XMQTheme *theme)
+{
+    // First install the default colors.
     XMQColorDef *colors = theme->colors_darkbg;
     for (int i = 0; i < NUM_XMQ_COLOR_NAMES; ++i)
     {
-        const char *color = defaultColor(i, "darkbg");
+        const char *color = default_color(i, "dark");
         string_to_color_def(color, &colors[i]);
     }
 
     colors = theme->colors_lightbg;
     for (int i = 0; i < NUM_XMQ_COLOR_NAMES; ++i)
     {
-        const char *color = defaultColor(i, "lightbg");
+        const char *color = default_color(i, "light");
         string_to_color_def(color, &colors[i]);
     }
+}
+
+bool install_theme(XMQTheme *theme, const char *single_theme)
+{
+    bool dark = true;
+    bool light = true;
+
+    const char *i = single_theme;
+    const char *stop = single_theme+strlen(single_theme);
+
+    const char *plus = strchr(single_theme, '+');
+    if (plus)
+    {
+        if (!strncmp(single_theme, "dark+", 5)) light = false;
+        else if (!strncmp(single_theme, "light+", 6)) dark = false;
+        else return false;
+        i = plus+1;
+    }
+
+    while (i < stop)
+    {
+        const char *eq = strchr(i, '=');
+        if (!eq) return false;
+        size_t len = eq-i;
+        // All theme names are three character or less.
+        if (len > 3) return false;
+
+        char name[4];
+        memset(name, 0, sizeof(name));
+        strncpy(name, i, len);
+
+        const char *col = strchr(i, ':');
+        if (!col) col = stop;
+
+        i = eq+1;
+        // 112233_B_U max len is 10
+        char color[17];
+        memset(color, 0, sizeof(color));
+        len = col-i;
+
+        if (len > 16) return false;
+        strncpy(color, i, len);
+
+        bool ok = install_single_color(theme, name, color, dark, light);
+        if (!ok) return false;
+        i = col+1;
+    }
+    return true;
+}
+
+bool installTheme(XMQTheme *theme, const char *theme_spec)
+{
+    // First install the default colors for dark and light.
+    install_default_colors(theme);
+
+    // Split into dark light
+    size_t len = strlen(theme_spec);
+
+    // Avoid overly long themes.
+    if (len > 2048) return false;
+
+    char first[2048];
+    char second[2048];
+
+    const char *i = strchr(theme_spec, ',');
+    if (i)
+    {
+        strncpy(first, theme_spec, i-theme_spec);
+        strcpy(second, i+1);
+    }
+    else
+    {
+        strcpy(first, theme_spec);
+        second[0] = 0;
+    }
+
+    bool ok = install_theme(theme, first);
+    ok &= install_theme(theme, second);
+
+    return ok;
 }
 
 #endif // DEFAULT_THEMES_MODULE
@@ -10342,7 +10713,7 @@ void parse_ixml(XMQParseState *state)
     xmlNodePtr root = xmlNewDocNode(state->doq->docptr_.xml, NULL, (const xmlChar *)"ixml", NULL);
     state->element_last = root;
     xmlDocSetRootElement(state->doq->docptr_.xml, root);
-    state->doq->root_.node = root;
+    state->doq->root_ = root;
     stack_push(state->element_stack, state->element_last);
 
     // ixml: s, prolog?, rule++RS, s.
@@ -11757,6 +12128,19 @@ void scan_content_fixup_charsets(XMQParseState *state, const char *start, const 
     }
 
     char *already_used = state->used_unicodes;
+
+    /* If we are parsing using --lines, ie each input line in the file is reparsed using the ixml grammar.
+       Hej aaa!
+       Hej aaa!
+       Hej aab!
+
+       with the ixml grammar:
+       name = -'Hej ', [L]+, '!'.
+
+       then the first line adds "H e j a" to the charset [L].
+       the second line adds nothing more.
+       the third line adds "b" to the charset [L].
+    */
 
     while (i < stop)
     {
@@ -15042,6 +15426,21 @@ bool is_unicode_whitespace(const char *start, const char *stop)
     return n > 1;
 }
 
+bool ends_with(const char *start, const char *stop, const char *pattern)
+{
+    size_t len = 0;
+    if (!stop)
+    {
+        len = strlen(start);
+        stop = start+len;
+    }
+    else
+    {
+        len = stop-start;
+    }
+    return !strncmp(stop-len, pattern, len);
+}
+
 #endif // TEXT_MODULE
 
 // PART C UTF8_C ////////////////////////////////////////
@@ -17592,7 +17991,17 @@ size_t print_element_name_and_attributes(XMQPrintState *ps, xmlNode *node)
         }
         print_utf8(ps, ns_color, 1, prefix, NULL);
         print_utf8(ps, COLOR_ns_colon, 1, ":", NULL);
+        /*
+          Useful code to debug namespaces.
+          print_utf8(ps, COLOR_ns_colon, 1, "[", NULL);
+          char bb[64];
+          snprintf(bb, 64, "node=%p ns=%p href=", node, node->ns);
+          print_utf8(ps, key_color, 1, bb, NULL);
+          print_utf8(ps, key_color, 1, node->ns->href, NULL);
+          print_utf8(ps, COLOR_ns_colon, 1, "] ", NULL);
+        */
     }
+
 
     if (is_key_value_node(node) && !xml_first_attribute(node))
     {
@@ -18175,6 +18584,20 @@ void print_attribute(XMQPrintState *ps, xmlAttr *a, size_t align)
         print_utf8(ps, COLOR_attr_ns, 1, prefix, NULL);
         print_utf8(ps, COLOR_ns_colon, 1, ":", NULL);
     }
+
+    //Useful code to debug namespaces.
+    /*
+    print_utf8(ps, COLOR_ns_colon, 1, "[", NULL);
+    char bb[64];
+    snprintf(bb, 64, "node=%p ns=%p href=", a, a->ns);
+    print_utf8(ps, COLOR_ns_colon, 1, bb, NULL);
+    if (a->ns && a->ns->href)
+    {
+        print_utf8(ps, COLOR_ns_colon, 1, a->ns->href, NULL);
+    }
+    print_utf8(ps, COLOR_ns_colon, 1, "] ", NULL);
+    */
+
     print_utf8(ps, COLOR_attr_key, 1, key, NULL);
 
     if (a->children != NULL && !is_single_empty_text_node(a->children))
@@ -18894,9 +19317,12 @@ void annotate_offsets(xmlDoc *doc, const char *attribute_name, const char *ns)
 
 void annotate_node(OffsetCounter *counter, xmlNode *node)
 {
+    if (!node) return;
+
     char buf[64];
     snprintf(buf, 64, "%d", counter->offset);
     xmlSetProp(node, (xmlChar*)counter->attribute_name, (xmlChar*)buf);
+    if (!node) return;
     if (node->type == XML_ELEMENT_NODE)
     {
         xmlNode *i = xml_first_child(node);
@@ -23159,21 +23585,42 @@ YaepGrammar *yaepNewGrammar()
 YaepParseRun *yaepNewParseRun(YaepGrammar *g)
 {
     YaepParseState *ps = (YaepParseState*)calloc(1, sizeof(YaepParseState));
-    INSTALL_PARSE_STATE_MAGIC(ps);
+    PARSE_INIT_MAGIC(ps);
 
     ps->run.grammar = g;
 
     return (YaepParseRun*)ps;
 }
 
-void yaepFreeParseRun(YaepParseRun *pr)
+void yaepResetParseRun(YaepParseRun *pr)
 {
     YaepParseState *ps = (YaepParseState*)pr;
+    PARSE_INIT_MAGIC(ps);
+
     if (ps->run.failure)
     {
         xmqFreeDoc(ps->run.failure);
+        ps->run.failure = NULL;
     }
-    assert(CHECK_PARSE_STATE_MAGIC(ps));
+    ps->run.failed_p = false;
+    ps->run.ambiguous_p = false;
+}
+
+void yaepFreeParseRun(YaepParseRun *pr)
+{
+    YaepParseState *ps = (YaepParseState*)pr;
+
+    assert(CAN_FREE_STATE_MAGIC(ps));
+    PARSE_FREE_MAGIC(ps);
+
+    if (ps->run.failure)
+    {
+        xmqFreeDoc(ps->run.failure);
+        ps->run.failure = NULL;
+        ps->run.failed_p = false;
+    }
+    ps->run.ambiguous_p = false;
+
     free(ps);
 }
 
@@ -23496,7 +23943,6 @@ int yaep_read_grammar(YaepParseRun *pr,
 
     assert(g != NULL);
     YaepParseState *ps = (YaepParseState*)pr;
-    assert(CHECK_PARSE_STATE_MAGIC(ps));
 
     if ((code = setjmp(ps->error_longjump_buff)) != 0)
     {
@@ -24938,7 +25384,8 @@ int yaepParse(YaepParseRun *pr, YaepGrammar *g)
 {
     YaepParseState *ps = (YaepParseState*)pr;
 
-    assert(CHECK_PARSE_STATE_MAGIC(ps));
+    assert(CAN_PARSE_STATE_MAGIC(ps));
+    PARSE_START_MAGIC(ps);
 
     ps->run.grammar = g;
     YaepTreeNode **root = &ps->run.root;
@@ -25011,6 +25458,9 @@ int yaepParse(YaepParseRun *pr, YaepGrammar *g)
     free_inside_parse_state(ps);
     free_input(ps);
     verbose("ixml=", "done parse");
+
+    PARSE_STOP_MAGIC(ps);
+
     return pr->failed_p;
 }
 
@@ -25018,7 +25468,6 @@ int yaepParse(YaepParseRun *pr, YaepGrammar *g)
 void yaepFreeGrammar(YaepParseRun *pr, YaepGrammar *g)
 {
     YaepParseState *ps = (YaepParseState*)pr;
-    assert(CHECK_PARSE_STATE_MAGIC(ps));
 
     YaepAllocator *allocator;
 
