@@ -10,6 +10,10 @@
 > Related add-on fork: https://github.com/zapster/wmbusmeters-ha-addon
 >
 > LINZ NETZ reference document: https://www.linznetz.at/media/linz_netz_website/netz_dokumente/Beschreibung-Wireless_M-Bus-Schnittstelle.pdf
+>
+> **2026-06-24 update:** After testing with upstream 3.0.0, the issue described below does **not**
+> reproduce on the unpatched code — the `AnyEnergyVIF` match works correctly with our meter.
+> This branch is kept for verification/reference purposes.
 
 # wmbusmeters
 
@@ -1103,6 +1107,37 @@ and then rebuild from the wmbusmeters directory `make`. The new driver is now
 compiled into the binary.
 
 You can also put the new driver file bbb.xmq into /etc/wmbusmeters.drivers.d and it will immediately be available to the wmbusmeters program without recompiling.
+
+# Common issues with AnyVIFRange match types
+
+The `vif_range = AnyEnergyVIF` (and similarly `AnyPowerVIF`, `AnyVolumeVIF`) matchers
+bind to **any** VIF code within the corresponding unit family. For electricity meters
+this means `AnyEnergyVIF` matches Energy Wh, Energy MJ, Energy MWh, and Energy GJ
+indiscriminately.
+
+**Problem:** When a telegram contains multiple energy-coded fields (e.g., `0E 03`
+for Energy Wh and `07 00` for Energy mWh in the same payload), `AnyEnergyVIF`
+may match the **first** energy VIF it encounters in the telegram instead of the
+intended one. Depending on the driver implementation this can produce either:
+
+- A `null` value (the value from the wrong field is discarded)
+- A wrong value with incorrect scaling if the wrong field is captured
+
+**Fix:** Replace `AnyEnergyVIF` with an exact `difvifkey` match that targets only
+the specific DIF/VIF combination used by the meter. For example, the DEV/amiplus
+meter uses `0E 03` (12-digit BCD, VIF=Energy Wh at 1 Wh resolution) for its
+total energy consumption field:
+
+```xmq
+match {
+    difvifkey = 0E03
+}
+```
+
+This also avoids `dif_signedness = Signed` mismatches — the `0E` DIF implies a
+12-digit BCD value which has inherent sign handling, whereas `07 00` uses a
+64-bit signed integer. Always verify the correct DIF/VIF key with
+`--analyze=<key>` on a real telegram from the meter.
 
 # Good free documents on the wireless mbus protocol standard EN 13757
 
