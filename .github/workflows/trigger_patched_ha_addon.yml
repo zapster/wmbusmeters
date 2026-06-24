@@ -47,7 +47,7 @@ jobs:
         with:
           token: ${{ secrets.ADDON_DISPATCH_TOKEN }}
           repository: zapster/wmbusmeters-ha-addon
-          event-type: build_addons
+          event-type: build_patched_addons
           client-payload: >-
             {
               "version": "${{ steps.payload.outputs.version }}",
