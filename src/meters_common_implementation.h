@@ -52,9 +52,13 @@ struct StringField
 {
     std::string value;
     FieldInfo *field_info {};
+    DVEntry dv_entry {};
 
     StringField() {}
-    StringField(std::string v, FieldInfo *f) : value(v), field_info(f) {}
+    StringField(std::string v, FieldInfo *f, DVEntry *dve) : value(v), field_info(f)
+    {
+        if (dve) dv_entry = *dve;
+    }
 };
 
 struct MeterCommonImplementation : public Meter
@@ -110,6 +114,8 @@ protected:
     void addLinkMode(LinkMode lm);
     void setMfctTPLStatusBits(Translate::Lookup &lookup);
     void setDiehlPriosDecode(bool v) { diehl_prios_decode_ = v; }
+    void setBuggySanxing609BDecode(bool v) { buggy_sanxing_609b_decode_ = v; }
+    void setTryQundisDecode(bool v) { try_qundis_decode_ = v; }
 
     void markLastFieldAsLibrary();
     FieldInfo *lastAddedField();
@@ -122,8 +128,9 @@ protected:
         VifScaling vif_scaling, // How should any Vif value be scaled.
         DifSignedness dif_signedness, // Should we override the default signed assumption for binary values?
         FieldMatcher matcher,
-        Unit display_unit = Unit::Unknown, // If specified use this unit for the json field instead instead of the default unit.
-        double scale = 1.0); // A hard coded extra scale factor. Useful for manufacturer specific values.
+        Unit display_unit = Unit::Unknown, // If specified convert the value to this unit for the json field instead instead of the default unit.
+        double scale = 1.0, // A hard coded extra scale factor. Useful for manufacturer specific values.
+        Unit force_unit = Unit::Unknown); // Override the unit derived from the VIF.
 
     void addNumericFieldWithCalculator(
         std::string vname,           // Name of value without unit, eg "total" "total_month{storagenr}"
@@ -155,20 +162,23 @@ protected:
         PrintProperties print_properties,
         FieldMatcher matcher,
         std::string ixml = "",
-        bool entire_payload = false);
+        bool entire_payload = false,
+        Quantity vquantity = Quantity::Text);
 
     void addStringFieldWithExtractorAndLookup(
         std::string vname,
         std::string help,
         PrintProperties print_properties,
         FieldMatcher matcher,
-        Translate::Lookup lookup); // Translate the bits/indexes.
+        Translate::Lookup lookup,
+        Quantity vquantity = Quantity::Text); // Translate the bits/indexes.
 
     // Used only for status field from tpl_status only.
     void addStringField(
         std::string vname,
         std::string help,
-        PrintProperties print_properties);
+        PrintProperties print_properties,
+        Quantity vquantity = Quantity::Text);
 
     // The default implementation of poll does nothing.
     // Override for mbus meters that need to be queried and likewise for C2/T2 wmbus-meters.
@@ -179,14 +189,22 @@ protected:
     void createMeterEnv(std::string id,
                         std::vector<std::string> *envs,
                         std::vector<std::string> *more_json); // Add this json "key"="value" strings.
+    void buildOutputDoc(XMQDoc *doc,
+                        std::string id,
+                        std::string media,
+                        Telegram *t,
+                        std::vector<FieldInfo> &prints,
+                        std::vector<std::string> *extra_constant_fields,
+                        bool first);
     void printMeter(Telegram *t,
                     std::string *human_readable,
-                    std::string *fields, char separator,
-                    std::string *json,
+                    std::string *fields,
+                    char separator,
                     std::vector<std::string> *envs,
                     std::vector<std::string> *more_json, // Add this json "key"="value" strings.
                     std::vector<std::string> *selected_fields, // Only print these fields.
-                    bool pretty_print); // Insert newlines and indentation.
+                    XMQDoc *doc); // Write the content into this document.
+
     // Json fields include all values except timestamp_ut, timestamp_utc, timestamp_lt
     // since Json is assumed to be decoded by a program and the current timestamp which is the
     // same as timestamp_utc, can always be decoded/recoded into local time or a unix timestamp.
@@ -200,7 +218,10 @@ protected:
     void processFieldCalculators();
 public:
     // This should be refactored.
-    std::string getStatusField(FieldInfo *fi);
+    std::string getStatusFlags(FieldInfo *fi);
+    std::map<std::string,bool> getStatusObjectMembers(FieldInfo *fi, Telegram *t);
+    std::map<std::string,uint64_t> getStatusLookupUnknowns(FieldInfo *fi, Telegram *t);
+    std::vector<std::string> getFieldFlags(FieldInfo *fi);
 protected:
 
     virtual void processContent(Telegram *t);
@@ -212,6 +233,7 @@ protected:
     void setStringValue(std::string vname, std::string v, DVEntry *dve = NULL);
     void setStringValue(FieldInfo *fi, std::string v, DVEntry *dve);
     std::string getStringValue(FieldInfo *fi);
+    void setFieldBits(FieldInfo *fi, uint64_t bits, DVEntry *dve);
 
     // Check if the meter has received a value for this field.
     bool hasValue(FieldInfo *fi);
@@ -258,6 +280,8 @@ private:
     MeterManager *meter_manager_ {};
     bool diehl_prios_decode_ = false;
     std::string diehl_prios_combined_hex_; // frame[header_size..+4] + LFSR-decoded payload
+    bool buggy_sanxing_609b_decode_ = false;
+    bool try_qundis_decode_ = false;
 
 protected:
 
@@ -274,6 +298,9 @@ protected:
     std::map<std::pair<std::string,Unit>,NumericField> numeric_values_;
     // Map field name (at_date) to string value.
     std::map<std::string,StringField> string_values_;
+    // Map field name to the raw bits a lookup-based text field was decoded from.
+    std::map<std::string,uint64_t> bits_values_;
+    bool getFieldBits(FieldInfo *fi, uint64_t *bits);
     // Used to block next poll, until this poll has received a respones.
     Semaphore waiting_for_poll_response_sem_;
     // If the telegram ends with 0x1f then set this to true, and the poll

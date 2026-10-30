@@ -10,6 +10,9 @@
 #define LINK_MODE_CT 3
 #define LINK_MODE_C 5
 #define LINK_MODE_ENHANCED_T 6
+#define LINK_MODE_CUSTOM_CT 7
+
+uchar setupIMSTBusDeviceToReceiveTelegrams(LinkModeSet lms);
 
 #define DEVMGMT_MSG_PING_REQ 0x01
 #define DEVMGMT_MSG_PING_RSP 0x02
@@ -150,3 +153,19 @@ LIST_OF_IU891A_WMBUSGW_ERROR_CODES
 
 const char *toString(ErrorCodeIU891AWMBUSGW ec);
 ErrorCodeIU891AWMBUSGW toErrorCodeIU891AWMBUSGW(uchar c);
+
+// Classify a raw SLIP-framed buffer into FullFrame/PartialFrame/ErrorInFrame and
+// extract the payload. Exposed (rather than a static member of a struct that is
+// only defined in wmbus_iu891a.cc) so it can be unit-tested, e.g. against the
+// empty / byte-at-a-time serial scenarios.
+FrameStatus iu891a_check_frame(std::vector<uchar> &data,
+                               std::vector<uchar> &out,
+                               size_t *frame_length_out,
+                               int *endpoint_id_out,
+                               int *msg_id_out,
+                               int *status_byte_out,
+                               int *rssi_dbm);
+
+// Collapse an over-long leading run of SLIP END (0xc0) markers down to a single
+// one, so an idle byte-at-a-time stream cannot grow the receive buffer unbounded.
+void iu891a_collapse_excess_end(std::vector<uchar> &buf, size_t limit);

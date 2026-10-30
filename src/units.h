@@ -59,6 +59,7 @@
     X(Text,TXT)               \
     X(Angle,DEGREE)           \
     X(Dimensionless,COUNTER)  \
+    X(Flags,TXT)  \
 
 enum class Quantity
 {
@@ -86,6 +87,7 @@ LIST_OF_QUANTITIES
     X(KWH,kwh,"kWh",Energy,"kilo Watt hour")   \
     X(MJ,mj,"MJ",Energy,"Mega Joule")          \
     X(GJ,gj,"GJ",Energy,"Giga Joule")          \
+    X(GCAL,gcal,"Gcal",Energy,"Giga calorie")          \
     X(KVARH,kvarh,"kVARh",Reactive_Energy,"kilo volt amperes reactive hour") \
     X(KVAH,kvah,"kVAh",Apparent_Energy,"kilo volt amperes hour")        \
     X(M3C,m3c,"m³°C",Energy,"cubic meter celsius")                      \
@@ -329,5 +331,47 @@ LIST_OF_UNITS
 
 const char *availableQuantities();
 const char *availableUnits();
+
+/*
+The Change enum describes how successive values of a field are to be interpreted over time.
+
+This does not describe whether the numeric value happens to increase or
+decrease, but whether differences between successive readings represent
+accumulated change.
+
+Sample:
+  A value describing the state or measurement at a particular point in
+  time. Differences between readings are changes in the measured state,
+  not accumulated consumption. Examples: temperature (external_temperature_c),
+  volume flow (flow_m3h), power_kw, battery_pct,
+  or a stored meter reading for a target date (target_m3).
+
+Net:
+  An accumulated value for which both positive and negative differences
+  between successive readings are meaningful. Example: net energy, where
+  import increases the value and export decreases it.
+  This is not so common in wmbus telegrams, but can be calculated.
+
+Increasing:
+  An accumulated counter for which positive differences represent
+  additional consumption or accumulation. A decrease normally indicates
+  a counter reset or rollover rather than negative consumption.
+  Examples: total water volume (total_m3), accumulated energy (total_kwh),
+  or HCA consumption (consumption_hca).
+*/
+enum class Change
+{
+    Sample,     // For example a flow rate or power consumption.
+    Net,        // Can go up and down, net energy, net volume.
+    Increasing, // Normally only goes up, the total m3 measured by a water meter.
+    Unknown
+};
+
+Change toChange(std::string s);
+const char *toString(Change c);
+
+Change defaultChangeForQuantity(Quantity q);
+
+bool nonNumericQuantity(Quantity q);
 
 #endif

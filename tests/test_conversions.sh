@@ -1,5 +1,7 @@
 #!/bin/sh
 
+. tests/include.sh
+
 PROG="$1"
 
 rm -rf testoutput
@@ -14,7 +16,7 @@ $PROG --format=json --calculate_total_gj=total_kwh \
       --calculate_current_gj=current_kwh \
       --calculate_previous_gj=previous_kwh \
       --calculate_external_temperature_f=min_external_temperature_last_month_c \
-      --calculate_flow_temperature_f=flow_temperature_c \
+      --calculate_flow_temperature_f=min_flow_temperature_last_month_c \
       --calculate_target_l=target_m3 \
       --calculate_total_l=total_m3 \
       simulations/simulation_conversionsadded.txt \
@@ -29,7 +31,7 @@ then
     diff $TEST/test_expected.txt $TEST/test_responses.txt
     if [ "$?" = "0" ]
     then
-        echo "OK: $TESTNAME"
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
         if [ "$USE_MELD" = "true" ]
@@ -39,4 +41,4 @@ then
     fi
 fi
 
-if [ "$TESTRESULT" = "ERROR" ]; then echo ERROR: $TESTNAME;  exit 1; fi
+if [ "$TESTRESULT" = "ERROR" ]; then printERROR "$TESTNAME";  exit 1; fi

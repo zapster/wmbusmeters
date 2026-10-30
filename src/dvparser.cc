@@ -22,6 +22,7 @@
 #include"wmbus.h"
 
 #include "crypto/crc16.h"
+#include "utils/fs.h"
 
 #include<cassert>
 #include<cmath>
@@ -306,30 +307,57 @@ static bool decodeCompactProfileHeader(uchar spacing_control,
     return false;
 }
 
+// Combinable vifs of a data record, without the markers that make it a compact profile.
+static set<VIFCombinable> combinableVifsWithoutProfileMarkers(const DVEntry &e)
+{
+    set<VIFCombinable> s = e.combinable_vifs;
+    s.erase(VIFCombinable::CompactProfile);
+    s.erase(VIFCombinable::CompactProfileWithRegister);
+    s.erase(VIFCombinable::InverseCompactProfile);
+    return s;
+}
+
+// Find the data record holding the base value that the compact profile refers to.
+// Base value and profile elements do not have to share the data field coding: OMS Spec Vol.2
+// Annex G, Table G.4 combines an 8 digit BCD base value with 4 digit BCD increments, since a
+// reading needs more range than an increment. The coding is therefore not compared here, but
+// is reported back so that reconstructed readings can be stored with it.
 static bool findCompactProfileBaseValue(unordered_map<string,pair<int,DVEntry>> *dv_entries,
                                         DVEntry &entry,
-                                        uchar slot_dif_nibble,
+                                        uchar *base_dif_nibble,
                                         uint64_t *base_value)
 {
     int base_storage = entry.storage_nr.intValue();
     int target_vif = entry.vif.intValue() & 0xff;
     int target_tariff = entry.tariff_nr.intValue();
     int target_subunit = entry.subunit_nr.intValue();
+    set<VIFCombinable> target_combinables = combinableVifsWithoutProfileMarkers(entry);
 
-    for (auto &kv : *dv_entries)
+    // A telegram can carry several profiles for the same quantity, told apart only by a
+    // combinable vif such as BackwardFlow, and each of them needs its own base value. Prefer a
+    // candidate whose combinable vifs match exactly; only when there is none, accept one that
+    // differs, so that a base value is never lost that would have been found before.
+    for (int require_matching_combinables = 1; require_matching_combinables >= 0; require_matching_combinables--)
     {
-        DVEntry &cand = kv.second.second;
-        if ((cand.dif_vif_key.dif() & 0x0f) != slot_dif_nibble) continue;
-        if (cand.storage_nr.intValue() != base_storage) continue;
-        if ((cand.vif.intValue() & 0xff) != target_vif) continue;
-        if (cand.tariff_nr.intValue() != target_tariff) continue;
-        if (cand.subunit_nr.intValue() != target_subunit) continue;
-
-        uint64_t v;
-        if (cand.extractLong(&v))
+        for (auto &kv : *dv_entries)
         {
-            *base_value = v;
-            return true;
+            DVEntry &cand = kv.second.second;
+            // Variable length records are the compact profiles themselves, never a base value.
+            if ((cand.dif_vif_key.dif() & 0x0f) == 0x0d) continue;
+            if (require_matching_combinables &&
+                combinableVifsWithoutProfileMarkers(cand) != target_combinables) continue;
+            if (cand.storage_nr.intValue() != base_storage) continue;
+            if ((cand.vif.intValue() & 0xff) != target_vif) continue;
+            if (cand.tariff_nr.intValue() != target_tariff) continue;
+            if (cand.subunit_nr.intValue() != target_subunit) continue;
+
+            uint64_t v;
+            if (cand.extractLong(&v))
+            {
+                *base_dif_nibble = cand.dif_vif_key.dif() & 0x0f;
+                *base_value = v;
+                return true;
+            }
         }
     }
 
@@ -407,6 +435,36 @@ static bool findCompactProfileBaseDate(unordered_map<string,pair<int,DVEntry>> *
         *date_measurement_type = cand.measurement_type;
         *base_date = d;
         *date_len = (int)bytes.size();
+        return true;
+    }
+
+    return false;
+}
+
+// Find the actuality duration that belongs to the base value of a compact profile, i.e. the
+// time between creating the base value and sending the telegram. OMS Spec Vol.2 Annex R, R.3.2
+// makes it the time reference of TAF7 profiles, which usually carry no valid base time.
+static bool findCompactProfileBaseActuality(unordered_map<string,pair<int,DVEntry>> *dv_entries,
+                                            DVEntry &entry,
+                                            double *actuality_s)
+{
+    int base_storage = entry.storage_nr.intValue();
+    int target_tariff = entry.tariff_nr.intValue();
+    int target_subunit = entry.subunit_nr.intValue();
+
+    for (auto &kv : *dv_entries)
+    {
+        DVEntry &cand = kv.second.second;
+        if (cand.storage_nr.intValue() != base_storage) continue;
+        if (cand.tariff_nr.intValue() != target_tariff) continue;
+        if (cand.subunit_nr.intValue() != target_subunit) continue;
+        if (!isInsideVIFRange(cand.vif, VIFRange::ActualityDuration)) continue;
+        if (cand.combinable_vifs.count(VIFCombinable::Synthetic) > 0) continue;
+
+        // Auto scaling brings seconds, minutes, hours and days alike to hours.
+        double hours = 0;
+        if (!cand.extractDouble(&hours, true, true)) continue;
+        *actuality_s = hours * 3600.0;
         return true;
     }
 
@@ -728,8 +786,30 @@ static void addSyntheticCompactProfileEntries(unordered_map<string,pair<int,DVEn
     int base_storage = entry.storage_nr.intValue();
     int synthetic_index = 0;
     uint64_t running_base_value_u = 0;
-    bool have_running_base_value = findCompactProfileBaseValue(dv_entries, entry, slot_dif_nibble, &running_base_value_u);
+    uchar base_dif_nibble = slot_dif_nibble;
+    bool have_running_base_value = findCompactProfileBaseValue(dv_entries, entry, &base_dif_nibble, &running_base_value_u);
     int64_t running_base_value = (int64_t)running_base_value_u;
+
+    // A reconstructed reading is stored with the coding of the base value record, not with the
+    // coding of the increment. OMS Spec Vol.2 Annex N, N.13 sends a base value of 1995 Wh with
+    // 1 byte increments; the readings derived from it do not fit into one byte.
+    int base_value_bytes = difLenBytes(base_dif_nibble);
+    if (base_value_bytes <= 0) have_running_base_value = false;
+
+    // Spacing expressed in seconds, for the profiles that are spaced by a fixed amount of time.
+    // Half month and month spacing is left out, there the calendar based dates are the answer.
+    int spacing_seconds = 0;
+    switch (distance)
+    {
+        case CompactProfileDistance::Seconds: spacing_seconds = spacing_step; break;
+        case CompactProfileDistance::Minutes: spacing_seconds = spacing_step * 60; break;
+        case CompactProfileDistance::Hours:   spacing_seconds = spacing_step * 3600; break;
+        case CompactProfileDistance::Days:    spacing_seconds = spacing_step * 86400; break;
+        default: break;
+    }
+
+    double base_actuality_s = 0;
+    bool have_base_actuality = findCompactProfileBaseActuality(dv_entries, entry, &base_actuality_s);
 
     uchar date_dif_nibble = 0;
     uchar date_vif = 0;
@@ -781,6 +861,9 @@ static void addSyntheticCompactProfileEntries(unordered_map<string,pair<int,DVEn
             return;
         }
 
+        bool reconstruct_reading = has_inverse_compact && is_incremental_mode && have_running_base_value;
+        uchar value_dif_nibble = reconstruct_reading ? base_dif_nibble : slot_dif_nibble;
+
         int storage_nr = base_storage + 1 + synthetic_index;
         int synthetic_subunit = entry.subunit_nr.intValue();
         if (distance == CompactProfileDistance::NotSpacedInTime && array_column > 0)
@@ -788,7 +871,7 @@ static void addSyntheticCompactProfileEntries(unordered_map<string,pair<int,DVEn
             // Use column index to separate parallel array columns.
             synthetic_subunit += array_column - 1;
         }
-        string base_key = makeSyntheticStorageKey(slot_dif_nibble, storage_nr, entry.vif.intValue() & 0xff);
+        string base_key = makeSyntheticStorageKey(value_dif_nibble, storage_nr, entry.vif.intValue() & 0xff);
         string key = base_key;
         int duplicate_nr = 2;
         while (dv_entries->count(key) > 0)
@@ -797,9 +880,7 @@ static void addSyntheticCompactProfileEntries(unordered_map<string,pair<int,DVEn
             duplicate_nr++;
         }
 
-        if (has_inverse_compact &&
-            is_incremental_mode &&
-            have_running_base_value)
+        if (reconstruct_reading)
         {
             int64_t delta = 0;
             if (!decodeCompactSlotSigned(slot_dif_nibble, value_bytes, binary_value_is_unsigned, &delta))
@@ -824,7 +905,7 @@ static void addSyntheticCompactProfileEntries(unordered_map<string,pair<int,DVEn
             }
 
             vector<uchar> encoded_absolute;
-            if (!encodeCompactSlotSigned(slot_dif_nibble, slot_bytes, absolute, false, &encoded_absolute))
+            if (!encodeCompactSlotSigned(value_dif_nibble, base_value_bytes, absolute, false, &encoded_absolute))
             {
                 // Overflow or unsupported conversion: terminate this profile from here.
                 stop_iteration = true;
@@ -836,7 +917,11 @@ static void addSyntheticCompactProfileEntries(unordered_map<string,pair<int,DVEn
         }
 
         string value_hex = bin2hex(value_bytes);
-        set<VIFCombinable> single_synthetic_combinable_vif;
+        // Carry over the combinable vifs of the profile the point came from. A telegram can hold
+        // two profiles for the same quantity, told apart only by a combinable such as BackwardFlow,
+        // and a field matcher compares that set exactly. Without this the generated points of both
+        // profiles look identical and a driver receives whichever the hash map happens to yield.
+        set<VIFCombinable> single_synthetic_combinable_vif = combinableVifsWithoutProfileMarkers(entry);
         single_synthetic_combinable_vif.insert(VIFCombinable::Synthetic);
         set<uint16_t> no_combinable_vifs_raw;
 
@@ -896,6 +981,48 @@ static void addSyntheticCompactProfileEntries(unordered_map<string,pair<int,DVEn
                     running_base_date = next_date;
                 }
             }
+        }
+        else if (spacing_seconds > 0 && have_base_actuality)
+        {
+            // Without a base time the profile has no absolute time reference, which is the normal
+            // case for TAF7 profiles: the meter has no clock and the receiving system timestamps
+            // the telegram. Each point then gets its own actuality duration, the one of the base
+            // value plus one spacing per step, so that a receiver with a clock can place it.
+            uint32_t age = (uint32_t)lround(base_actuality_s) + (uint32_t)spacing_seconds * (uint32_t)(synthetic_index + 1);
+            vector<uchar> age_bytes = { (uchar)(age & 0xff),
+                                        (uchar)((age >> 8) & 0xff),
+                                        (uchar)((age >> 16) & 0xff),
+                                        (uchar)((age >> 24) & 0xff) };
+            string age_hex = bin2hex(age_bytes);
+
+            string age_base_key = makeSyntheticStorageKey(0x4, storage_nr, 0x74);
+            string age_key = age_base_key;
+            int age_duplicate_nr = 2;
+            while (dv_entries->count(age_key) > 0)
+            {
+                strprintf(&age_key, "%s_%d", age_base_key.c_str(), age_duplicate_nr);
+                age_duplicate_nr++;
+            }
+
+            // Same combinables as the reading itself, so import and export stay apart here too.
+            set<VIFCombinable> age_combinable_vifs = combinableVifsWithoutProfileMarkers(entry);
+            age_combinable_vifs.insert(VIFCombinable::Synthetic);
+            set<uint16_t> no_age_combinable_vifs_raw;
+
+            auto age_insert_res = dv_entries->emplace(age_key,
+                                  std::make_pair(offset,
+                                         DVEntry(offset,
+                                                 DifVifKey(age_key),
+                                                 entry.measurement_type,
+                                                 Vif(0x74),
+                                                 std::move(age_combinable_vifs),
+                                                 std::move(no_age_combinable_vifs_raw),
+                                                 StorageNr(storage_nr),
+                                                 entry.tariff_nr,
+                                                 SubUnitNr(synthetic_subunit),
+                                                 age_hex)));
+            assert(age_insert_res.second);
+            debug("(dvparser) inserted synthetic actuality duration %s\n", age_key.c_str());
         }
 
         synthetic_index++;
@@ -974,10 +1101,10 @@ bool parseDV(Telegram *t,
         // part of the data! This is the default.
         format = &data;
         format_end = data_end;
-#ifdef COLLECT
+#ifdef COLLECT_FILE
         string s = bin2hex(data, data_end, data_len);
-        bool ok = appendFile("/tmp/difvifexamples", s);
-        if (!ok) fprintf(stderr, "Failed to append to /tmp/difvifexamples.\n");
+        bool ok = appendFile(COLLECT_FILE, s);
+        if (!ok) fprintf(stderr, "Failed to append to " COLLECT_FILE ".\n");
 #endif
     } else {
         // A format string has been supplied. The data is compressed,
@@ -1390,7 +1517,7 @@ bool parseDV(Telegram *t,
 
         if (format_bytes_len != 0) {
             uint16_t hash = crc16_EN13757(safeButUnsafeVectorPtr(format_bytes), format_bytes_len);
-                
+
             if (hash_to_format_.count(hash) == 0) {
                 hash_to_format_[hash] = format_bytes;
                 debug("(dvparser) found new format \"%s\" with hash %x, remembering!\n", bin2hex(format_bytes).c_str(), hash);
@@ -1469,7 +1596,7 @@ struct OffsetEntries {
 };
 typedef OffsetEntries OffsetEntries;
 
-XMQProceed add_value(XMQDoc *doc, XMQNodePtr node, void *user_data)
+XMQProceed add_value(XMQDoc *doc, XMQNode *node, void *user_data)
 {
     OffsetEntries *oe = (OffsetEntries*)user_data;
     Telegram *t = oe->telegram;
@@ -1502,9 +1629,9 @@ XMQProceed add_value(XMQDoc *doc, XMQNodePtr node, void *user_data)
     return XMQ_CONTINUE;
 }
 
-XMQProceed update_offset(XMQDoc *doc, XMQNodePtr node, void *user_data)
+XMQProceed update_offset(XMQDoc *doc, XMQNode *node, void *user_data)
 {
-    XMQNodePtr o = xmqGetNodeRel(doc, "@off", node);
+    XMQNode *o = xmqGetNodeRel(doc, "@off", node);
     const char *c = xmqGetContent(o);
     fprintf(stderr, "UPDATTO %s\n", c);
     xmqSetContent(o, c);
@@ -1518,7 +1645,9 @@ bool parseWithIXML(Telegram *t,
                    XMQDoc *ixml_grammar,
                    std::unordered_map<std::string,std::pair<int,DVEntry>> *dv_entries)
 {
-    XMQDoc *decode = xmqNewDoc();
+    XMQReturnDoc rd = xmqNewDoc();
+    assert(rd.status == XMQ_OK);
+    XMQDoc *decode = rd.doc;
     bool b = xmqParseBufferWithIXML(decode,
                                     hex.c_str(),
                                     NULL,
@@ -1881,6 +2010,7 @@ bool DVEntry::extractDouble(double *out, bool auto_scale, bool force_unsigned)
         {
             draw = (double)((int64_t)(negate_mask | raw));
         }
+        // Convert the value to wmbusmeters standardized unit for the vif.
         if (auto_scale) scale = vifScale(dif_vif_key.vif());
         *out = (draw) / scale;
     }

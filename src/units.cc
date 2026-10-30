@@ -83,7 +83,18 @@ double to_dbm_from_w(double w) { return 10.0*log10(w*1000.0); }
     X(DateLT, DateTimeLT, {vto=vfrom; }) \
     X(DEGREE, RADIAN, {vto=vfrom*M_PI/180.0;}) \
     X(RADIAN, DEGREE, {vto=vfrom*180.0/M_PI;}) \
+    X(GCAL, KWH,{vto=vfrom*1163.0;}) \
+    X(KWH, GCAL,{vto=vfrom/1163.0;}) \
 
+/*
+  The conversion factor from gigacalories (Gcal) to kilowatt-hours (kWh) is 1163.
+  This comes from the "International Table calorie" https://www.britannica.com/science/International-Table-calorie
+  Energy billing and engineering standards rely on the International Steam Table calorie (defined as exactly 4.1868 Joules).
+  When you upscale this to Gigacalories and convert it to Kilowatt-hours, it equals exactly 1,163 kWh
+  Utility billing software prioritize clean, standardized rounding to avoid micro-discrepancies.
+
+  The other option is to use the Thermochemical Table, which results in 1162.22, but this is not used in wmbusmeters.
+*/
 
 #define LIST_OF_SI_CONVERSIONS  \
     X(Second, 1.0, SIExp().s(1))                                   \
@@ -98,6 +109,7 @@ double to_dbm_from_w(double w) { return 10.0*log10(w*1000.0); }
     X(KWH,    3.6e+06,    SIExp().kg(1).m(2).s(-2))                 \
     X(MJ,     1.0e+06,    SIExp().kg(1).m(2).s(-2))                 \
     X(GJ,     1.0e+09,    SIExp().kg(1).m(2).s(-2))                 \
+    X(GCAL,   (1163.0 * 3.6e+06), SIExp().kg(1).m(2).s(-2))        \
     X(KVARH,  3.6e+06,    SIExp().kg(1).m(2).s(-2))                 \
     X(KVAH,   3.6e+06,    SIExp().kg(1).m(2).s(-2))                 \
     X(M3C,    1.0,        SIExp().m(3).c(1))                        \
@@ -901,4 +913,62 @@ LIST_OF_UNITS
     // Remove last newline
     available_units_[strlen(available_units_)-1] = 0;
     return available_units_;
+}
+
+Change toChange(string s)
+{
+    if (s == "Sample") return Change::Sample;
+    if (s == "Net") return Change::Net;
+    if (s == "Increasing") return Change::Increasing;
+    return Change::Unknown;
+}
+
+const char *toString(Change c)
+{
+    if (c == Change::Sample) return "Sample";
+    if (c == Change::Net) return "Net";
+    if (c == Change::Increasing) return "Increasing";
+    return "?";
+}
+
+Change defaultChangeForQuantity(Quantity q)
+{
+    // Check if it should be increasing
+    switch (q)
+    {
+    case Quantity::Time:
+    case Quantity::Length:
+    case Quantity::Mass:
+        // Not Amperage
+        // Not Temperature
+    case Quantity::AmountOfSubstance:
+        // Not  LuminousIntensity
+    case Quantity::Energy:
+    case Quantity::Reactive_Energy:
+    case Quantity::Apparent_Energy:
+        // Not Power:
+        // Not Reactive_Power:
+        // Not Apparent_Power
+    case Quantity::Volume:
+        // Not Flow
+        // Not Voltage
+        // Not Frequency
+        // Not Pressure
+        // Not PointInTime
+        // Not RelativeHumidity
+    case Quantity::HCA:
+        // Not Text
+        // Not Angle
+        // Not Dimensionless
+        // Not Flags
+        return Change::Increasing;
+    default:
+        // Otherwise we default to Sample changes.
+        return Change::Sample;
+    }
+}
+
+bool nonNumericQuantity(Quantity q)
+{
+    return q == Quantity::Text || q == Quantity::Flags;
 }

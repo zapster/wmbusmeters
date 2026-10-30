@@ -34,23 +34,23 @@
 
 
 #define LIST_OF_METER_TYPES \
-    X(AutoMeter) \
-    X(UnknownMeter) \
-    X(DoorWindowDetector) \
-    X(ElectricityMeter) \
-    X(GasMeter) \
-    X(HeatCoolingMeter) \
-    X(HeatCostAllocationMeter) \
-    X(HeatMeter) \
-    X(PressureSensor)  \
-    X(PulseCounter) \
-    X(Repeater) \
-    X(SmokeDetector) \
-    X(TempHygroMeter) \
-    X(WaterMeter)  \
+    X(AutoMeter,"Auto meter.") \
+    X(UnknownMeter,"Unknown meter.") \
+    X(DoorWindowDetector,"Door/window detector.") \
+    X(ElectricityMeter,"Electricity meter.") \
+    X(GasMeter,"Gas meter.") \
+    X(HeatCoolingMeter,"Heating/cooling meter.") \
+    X(HeatCostAllocationMeter,"Heat cost allocator.") \
+    X(HeatMeter,"Heat meter.")\
+    X(PressureSensor,"Pressure sensor.") \
+    X(PulseCounter,"Pulse counter.") \
+    X(Repeater,"Repeater.") \
+    X(SmokeDetector,"Smoke detector.") \
+    X(TempHygroMeter,"Thermometer/hygrometer.") \
+    X(WaterMeter,"Water meter") \
 
 enum class MeterType {
-#define X(name) name,
+#define X(name,desc) name,
 LIST_OF_METER_TYPES
 #undef X
 };
@@ -155,10 +155,14 @@ struct DriverInfo
 private:
 
     DriverName name_; // auto, unknown, amiplus, lse_07_17, multical21 etc
+    std::string deprecated_by_; // "ultrimisv2 upgrade before 2027-01-01"
     std::vector<DriverName> name_aliases_; // Secondary names that will map to this driver.
+    std::map<std::string,std::string> flags_; // Flags map to infos here.
     LinkModeSet linkmodes_; // C1, T1, S1 or combinations thereof.
     Translate::Lookup mfct_tpl_status_bits_; // Translate any mfct specific bits in tpl status.
     MeterType type_; // Water, Electricity etc.
+    std::string info_; // You can add a more detailed description of the meter. E.g. "Under floor heating with thermostat."
+    // Normally an info string is generated from the MeterType, ie WaterMeter becomes "Water meter." defaultMeterTypeText
     std::function<std::shared_ptr<Meter>(MeterInfo&,DriverInfo&di)> constructor_; // Invoke this to create an instance of the driver.
     std::vector<MVT> mvts_;
     std::vector<std::string> default_fields_;
@@ -170,13 +174,21 @@ private:
     std::string dynamic_source_xmq_ {}; // A copy of the xmq used to create a dynamic driver.
     std::vector<std::pair<uint16_t,std::vector<uchar>>> compact_frame_formats_;
     std::vector<std::vector<uchar>> default_keys_; // Default keys from driver XMQ; tried in order when no meter key is set.
+    bool has_flags_in_driver_ = false;
+    bool error_in_driver_ = false;
+    std::string error_in_driver_msg_;
+    bool status_field_found_ {};
 
 public:
     ~DriverInfo();
     DriverInfo() {};
     void setName(std::string n) { name_ = n; }
+    void setDeprecatedBy(std::string d) { deprecated_by_ = d; }
     void addNameAlias(std::string n) { name_aliases_.push_back(n); }
     void setMeterType(MeterType t) { type_ = t; }
+    MeterType getMeterType() { return type_; }
+    std::string getInfo() { return info_; }
+    void setInfo(std::string t) { info_ = t; }
     void setAliases(std::string f);
     void setDefaultFields(std::string f) { default_fields_ = splitString(f, ','); }
     void addLinkMode(LinkMode lm) { linkmodes_.addLinkMode(lm); }
@@ -185,6 +197,13 @@ public:
     void addMVT(uint16_t mfct, uchar type, uchar ver) { mvts_.push_back({ mfct, ver, type }); }
     void addCompactFrameFormat(uint16_t sig, std::vector<uchar> difvif) { compact_frame_formats_.push_back({ sig, std::move(difvif) }); }
     const std::vector<std::pair<uint16_t,std::vector<uchar>>> &compactFrameFormats() { return compact_frame_formats_; }
+    void addDefaultFlags();
+    void markHasFlagsInDriver() { has_flags_in_driver_ = true; }
+    bool hasFlagsInDriver() { return has_flags_in_driver_; }
+    void addFlag(const std::string &name, const std::string &info) { if (flags_.count(name) == 0) flags_[name] = info; }
+    bool hasFlag(const std::string &name) { return flags_.count(name) > 0; }
+    std::vector<std::string> sortedFlags();
+    std::string getFlagInfo(const std::string &name) { if (flags_.count(name) == 0) return ""; return flags_[name]; }
     void addDefaultKey(const std::vector<uchar> &key) { default_keys_.push_back(key); }
     const std::vector<std::vector<uchar>> &defaultKeys() const { return default_keys_; }
     void usesProcessContent() { has_process_content_ = true; }
@@ -203,6 +222,7 @@ public:
     std::vector<MVT> &mvts() { return mvts_; }
 
     DriverName name() { return name_; }
+    std::string deprecatedBy() { return deprecated_by_; }
     std::vector<DriverName>& nameAliases() { return name_aliases_; }
     bool hasDriverName(DriverName dn) {
         if (name_ == dn) return true;
@@ -220,6 +240,26 @@ public:
     bool isCloseEnoughMedia(uchar type);
     int forceMfctIndex() { return force_mfct_index_; }
     bool hasProcessContent() { return has_process_content_; }
+
+    void errorInDriver(const std::string& msg)
+    {
+        error_in_driver_ = true;
+        if (error_in_driver_msg_.length() > 0) error_in_driver_msg_ += "\n";
+        error_in_driver_msg_ += msg;
+    }
+
+    bool hasError()
+    {
+        return error_in_driver_;
+    }
+
+    const std::string &errorInDriverMsg()
+    {
+        return error_in_driver_msg_;
+    }
+
+    bool markStatusFieldAsFound() { if (status_field_found_) { return true; } else { status_field_found_ = true; return false; } }
+
 };
 
 bool staticRegisterDriver(std::function<void(DriverInfo&di)> setup);
@@ -261,7 +301,6 @@ DifSignedness toDifSignedness(const char *s);
 enum PrintProperty
 {
     REQUIRED = 1, // If no data has arrived, then print this field anyway with NaN or null.
-    DEPRECATED = 2, // This field is about to be removed or changed in a newer driver, which will have a new name.
     STATUS = 4, // This is >the< status field and it should read OK of not error flags are set.
     INCLUDE_TPL_STATUS = 8, // This text field also includes the tpl status decoding. multiple OK:s collapse to a single OK.
     INJECT_INTO_STATUS = 16, // This text field is injected into the already defined status field. multiple OK:s collapse.
@@ -277,7 +316,6 @@ struct PrintProperties
     PrintProperties(int x) : props_(x) {}
 
     bool hasREQUIRED() { return props_ & PrintProperty::REQUIRED; }
-    bool hasDEPRECATED() { return props_ & PrintProperty::DEPRECATED; }
     bool hasSTATUS() { return props_ & PrintProperty::STATUS; }
     bool hasINCLUDETPLSTATUS() { return props_ & PrintProperty::INCLUDE_TPL_STATUS; }
     bool hasINJECTINTOSTATUS() { return props_ & PrintProperty::INJECT_INTO_STATUS; }
@@ -288,7 +326,7 @@ private:
     int props_;
 };
 
-// Parse a string like DEPRECATED,HIDE into bits.
+// Parse a string like STATUS,HIDE into bits.
 PrintProperties toPrintProperties(std::string s);
 
 #define DEFAULT_PRINT_PROPERTIES 0
@@ -300,6 +338,7 @@ struct FieldInfo
               std::string vname,
               Quantity quantity,
               Unit display_unit,
+              Unit override_vif_unit,
               VifScaling vif_scaling,
               DifSignedness dif_signedness,
               double scale,
@@ -319,6 +358,7 @@ struct FieldInfo
     std::string vname() { return vname_; }
     Quantity xuantity() { return xuantity_; }
     Unit displayUnit() { return display_unit_; }
+    Unit overrideVifUnit() { return override_vif_unit_; }
     VifScaling vifScaling() { return vif_scaling_; }
     DifSignedness difSignedness() { return dif_signedness_; }
     double scale() { return scale_; }
@@ -338,6 +378,8 @@ struct FieldInfo
     std::string renderJsonOnlyDefaultUnit(Meter *m);
     std::string renderJson(Meter *m, DVEntry *dve);
     std::string renderJsonText(Meter *m, DVEntry *dve);
+    void insertNumericValueIntoDoc(std::string vname, Meter *m, DVEntry *dve, XMQDoc *doc, XMQNode *telegram, XMQNode *details, XMQNode *structured);
+    void insertStringValueIntoDoc(const std::string &vname, const std::string &value, Meter *m, Telegram *t, DVEntry *dve, XMQDoc *doc, XMQNode *telegram, XMQNode *details_fields, XMQNode *structured);
     // Render the field name based on the actual field from the telegram.
     // A FieldInfo can be declared to handle any number of storage fields of a certain range.
     // The vname is then a pattern total_at_month_{storage_counter} that gets translated into
@@ -352,6 +394,10 @@ struct FieldInfo
     std::string str();
 
     void markAsLibrary() { from_library_ = true; index_ = -1; }
+
+    void markAsDeprecatedBy(std::string d) { deprecated_by_ = d; }
+
+    std::string deprecatedBy() { return deprecated_by_; }
 
     void useIXML(const std::string& ixml);
     XMQDoc *ixmlGrammar() { return ixml_grammar_.get(); }
@@ -368,6 +414,8 @@ struct FieldInfo
     void setNullValue(double nv) { has_null_value_ = true; null_value_ = nv; }
     bool hasNullValue() { return has_null_value_; }
     double nullValue() { return null_value_; }
+    void setChange(Change c) { change_ = c; }
+    Change getChange() { return change_; }
     void setTPLAESCBCIVPayloadTransform(int payload_offset, int payload_length, int tpl_acc_offset)
     {
         has_tpl_aes_cbc_iv_payload_transform_ = true;
@@ -382,7 +430,9 @@ private:
     int index_; // The field infos for a meter are ordered.
     std::string vname_; // Value name, like: total current previous target, ie no unit suffix.
     Quantity xuantity_; // Quantity: Energy, Volume
+    Change  change_ {}; // Instant, Net, Increasing defaults to Instant.
     Unit display_unit_; // Selected display unit for above quantity: KWH, M3
+    Unit override_vif_unit_;   // Override the VIF-derived unit.
     VifScaling vif_scaling_;
     DifSignedness dif_signedness_;
     double scale_; // A hardcoded scale factor. Used only for manufacturer specific values with unknown units for the vifs.
@@ -432,6 +482,8 @@ private:
     int payload_offset_ {};
     int payload_length_ {};
     int tpl_acc_offset_ {};
+
+    std::string deprecated_by_;
 };
 
 struct BusManager;
@@ -475,7 +527,19 @@ struct Meter
     virtual void setStringValue(FieldInfo *fi, std::string v, DVEntry *dve) = 0;
     virtual void setStringValue(std::string vname, std::string v, DVEntry *dve = NULL) = 0;
     virtual std::string getStringValue(FieldInfo *fi) = 0;
+    virtual void setFieldBits(FieldInfo *fi, uint64_t bits, DVEntry *dve) = 0;
     virtual std::string decodeTPLStatusByte(uchar sts) = 0;
+    virtual std::string getStatusFlags(FieldInfo *fi) = 0;
+    virtual std::map<std::string,bool> getStatusObjectMembers(FieldInfo *fi, Telegram *t) = 0;
+    // For each BitToString lookup rule applied to the status field (directly or via
+    // INJECT_INTO_STATUS), returns, keyed by the rule name, the bits that were set in
+    // the input value but have no map entry (0 when every set bit is mapped).
+    // Every applicable rule is included in the returned map.
+    virtual std::map<std::string,uint64_t> getStatusLookupUnknowns(FieldInfo *fi, Telegram *t) = 0;
+    // Returns the names of all flags (BitToString map "to" strings) defined for this field.
+    // For the STATUS field this is the aggregation of its own lookups and the lookups of all
+    // INJECT_INTO_STATUS fields. For an INJECT_INTO_STATUS field it is just its own lookups.
+    virtual std::vector<std::string> getFieldFlags(FieldInfo *fi) = 0;
 
     virtual void onUpdate(std::function<void(Telegram*t,Meter*)> cb) = 0;
     virtual int numUpdates() = 0;
@@ -485,12 +549,12 @@ struct Meter
                                 std::vector<std::string> *more_json) = 0;
     virtual void printMeter(Telegram *t,
                             std::string *human_readable,
-                            std::string *fields, char separator,
-                            std::string *json,
+                            std::string *fields,
+                            char separator,
                             std::vector<std::string> *envs,
                             std::vector<std::string> *more_json,
                             std::vector<std::string> *selected_fields,
-                            bool pretty_print_json) = 0;
+                            XMQDoc *doc) = 0;
 
     // The handleTelegram expects an input_frame where the DLL crcs have been removed.
     // Returns true of this meter handled this telegram!
@@ -540,6 +604,7 @@ std::shared_ptr<MeterManager> createMeterManager(bool daemon);
 
 const char *toString(MeterType type);
 MeterType toMeterType(std::string type);
+const char *defaultMeterTypeText(MeterType type);
 std::string toString(DriverInfo &driver);
 const char *toString(ReadableString rs);
 ReadableString toReadableString(std::string rs);

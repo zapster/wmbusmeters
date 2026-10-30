@@ -1,5 +1,7 @@
 #!/bin/sh
 
+. tests/include.sh
+
 PROG="$1"
 TEST=testoutput
 mkdir -p $TEST
@@ -11,22 +13,22 @@ $PROG --useconfig=tests/config14 2> $TEST/test_stderr.txt > $TEST/test_output.tx
 
 if [ "$?" = "0" ]
 then
-    INFO=$(cat /tmp/wmbusmeters_metershell1_test)
+    INFO=$(cat $TEST/wmbusmeters_metershell1_test)
     EXPECTED='TESTING METERSHELL 12345678'
     if [ "$INFO" = "$EXPECTED" ]
     then
-        echo "OK: $TESTNAME (--metershell output)"
+        printOK "$TESTNAME (--metershell output)"
         TESTRESULT="OK"
     else
         echo "Expected: $EXPECTED"
         echo "Got     : $INFO"
     fi
 
-    INFO=$(cat /tmp/wmbusmeters_metershell2_test)
+    INFO=$(cat $TEST/wmbusmeters_metershell2_test)
     EXPECTED='TESTING SHELL 12345678'
     if [ "$INFO" = "$EXPECTED" ]
     then
-        echo "OK: $TESTNAME (--shell output)"
+        printOK "$TESTNAME (--shell output)"
         TESTRESULT="OK"
     else
         echo "Expected: $EXPECTED"
@@ -36,6 +38,6 @@ fi
 
 if [ "$TESTRESULT" = "ERROR" ]
 then
-    echo ERROR: $TESTNAME
+    printERROR "$TESTNAME"
     exit 1
 fi

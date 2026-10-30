@@ -27,6 +27,8 @@
 #include"translatebits.h"
 #include"util.h"
 #include"wmbus.h"
+#include"wmbus_utils.h"
+#include"wmbus_iu891a.h"
 #include"dvparser.h"
 #include"xmq.h"
 
@@ -61,10 +63,14 @@ bool verbose_ = false;
     X(months)         \
     X(years)          \
     X(aes)            \
+    X(aes_ccm_tag)    \
     X(sbc)            \
     X(hex)            \
     X(translate)                                \
+    X(translate_unknown_bits)                   \
+    X(translate_pre_shift_right)                \
     X(slip)                                     \
+    X(iu891a_slip)                              \
     X(dvs)                                      \
     X(ascii_detection)                          \
     X(status_join)                              \
@@ -218,7 +224,9 @@ bool tst_ixmlparse(const char *hex, const char *grammar, std::unordered_map<std:
 {
     debug("\n\nTest ixml parse nr %d......\n\n", testnr);
     bool b;
-    XMQDoc *ixml = xmqNewDoc();
+    XMQReturnDoc rd = xmqNewDoc();
+    assert(rd.status == XMQ_OK);
+    XMQDoc *ixml = rd.doc;
     b = xmqParseBufferWithType(ixml, grammar, NULL, NULL, XMQ_CONTENT_IXML, 0);
     if (!b) {
         fprintf(stderr, "Failed to parse IXML grammar: %s\n", grammar);
@@ -305,6 +313,22 @@ void tst_subunit(unordered_map<string,pair<int,DVEntry>> &values, const char *ke
     }
 }
 
+void tst_combinable(unordered_map<string,pair<int,DVEntry>> &values, const char *key, VIFCombinable vc, bool expected, int testnr)
+{
+    if (!hasKey(&values, key))
+    {
+        fprintf(stderr, "Error in dvparser testnr %d: key %s does not exist\n", testnr, key);
+        return;
+    }
+
+    bool got = values[key].second.combinable_vifs.count(vc) > 0;
+    if (got != expected)
+    {
+        fprintf(stderr, "Error in dvparser testnr %d: key %s %s combinable %s\n",
+                testnr, key, got ? "has unexpected" : "is missing", toString(vc));
+    }
+}
+
 void test_dvparser()
 {
     unordered_map<string,pair<int,DVEntry>> dv_entries;
@@ -331,7 +355,17 @@ void test_dvparser()
     testnr++;
     dv_entries.clear();
     tst_parse("426C FE04", &dv_entries, testnr);
-    tst_date(dv_entries, "426C", "2007-04-30 00:00:00", testnr); // 2010-dec-31
+    tst_date(dv_entries, "426C", "2007-04-30 00:00:00", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    tst_parse("446C 0C0DD62C", &dv_entries, testnr);
+    tst_date(dv_entries, "446C", "2022-12-22 13:12:00", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    tst_parse("466C 2D0C0DD62C33", &dv_entries, testnr);
+    tst_date(dv_entries, "466C", "2022-12-22 13:12:45", testnr);
 
     testnr++;
     dv_entries.clear();
@@ -445,6 +479,56 @@ void test_dvparser()
     tst_parse("0213E803 0D9313 04 12000500", &dv_entries, testnr);
     tst_double(dv_entries, "42137F77", 0.005, testnr);
     tst_subunit(dv_entries, "42137F77", 1, testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // OMS Spec Vol.2 (Issue 5.0.1) Annex G, Table G.6: inverse compact profile of a water meter.
+    // Base value 1013 l and base time 2008-05-31 on storage 8, spacing control 7Ah (increments,
+    // full month, 4 digit BCD), spacing value FEh (one month), elements 258, 332, 214, 144.
+    // Note that the base value is coded as 8 digit BCD while the increments are 4 digit BCD.
+    // Table G.7 prints the expected single data points: storage 9..12 carry 755, 423, 209 and
+    // 65 litres at 2008-04-30, 2008-03-31, 2008-02-29 and 2008-01-31. The keys below are the
+    // data information blocks from that table, CC 04 13 and so on.
+    tst_parse("8C041313100000 82046C1F15 8D0493130A7AFE58023203140244 01", &dv_entries, testnr);
+    tst_double(dv_entries, "CC04137F77", 0.755, testnr);
+    tst_double(dv_entries, "8C05137F77", 0.423, testnr);
+    tst_double(dv_entries, "CC05137F77", 0.209, testnr);
+    tst_double(dv_entries, "8C06137F77", 0.065, testnr);
+    tst_date(dv_entries, "C2046C7F77", "2008-04-30 00:00:00", testnr);
+    tst_date(dv_entries, "82056C7F77", "2008-03-31 00:00:00", testnr);
+    tst_date(dv_entries, "C2056C7F77", "2008-02-29 00:00:00", testnr);
+    tst_date(dv_entries, "82066C7F77", "2008-01-31 00:00:00", testnr);
+
+    testnr++;
+    dv_entries.clear();
+    // Application layer of an EMH electricity meter (EMH 00/02) sending TAF7 data as described
+    // by OMS Spec Vol.2 Annex R. Two inverse compact profiles on storage 3, spacing control 41h
+    // (increments, 1 byte) and spacing value 08h (8 seconds), 34 elements each.
+    // The import base value is a 64 bit binary 95772 Wh, so the readings derived from the 1 byte
+    // increments are stored as 64 bit binary as well. Increments are 0 Wh and 1 Wh here, which
+    // matches the 90 W reported as current power in the same telegram.
+    tst_parse("2F2F 0700285EB50500000000 07803C3408000000000000 0728905F010000000000 04208F841601"
+              "01FD971D00 C1017402 C401208D841601 C701031C76010000000000"
+              "CD01831324410800010000000001000000000100000001000000000100000000010000000001000000"
+              "C701833C0200000000000000"
+              "CD0183933C244108000000000000000000000000000000000000000000000000000000000000000000",
+              &dv_entries, testnr);
+    tst_double(dv_entries, "C70103", 95.772, testnr);
+    tst_double(dv_entries, "8702037F77", 95.772, testnr);
+    tst_double(dv_entries, "C702037F77", 95.771, testnr);
+    tst_double(dv_entries, "8703037F77", 95.771, testnr);
+    // The backward flow profile keeps its own base value of 2 Wh, it must not pick up the import one.
+    tst_double(dv_entries, "C701833C", 0.002, testnr);
+    tst_double(dv_entries, "8702037F77_2", 0.002, testnr);
+    // Both profiles land on the same storage numbers and differ only by the combinable vif they
+    // were sent with. A field matcher compares that set exactly, so the points have to keep it.
+    tst_combinable(dv_entries, "8702037F77", VIFCombinable::BackwardFlow, false, testnr);
+    tst_combinable(dv_entries, "8702037F77_2", VIFCombinable::BackwardFlow, true, testnr);
+    // No base time in this telegram, so every point carries an actuality duration instead:
+    // the 2 s of the base value plus 8 s per step, i.e. 10, 18, 26 seconds, held as hours here.
+    tst_double(dv_entries, "8402747F77", 10.0/3600.0, testnr);
+    tst_double(dv_entries, "C402747F77", 18.0/3600.0, testnr);
+    tst_double(dv_entries, "8403747F77", 26.0/3600.0, testnr);
 }
 
 void test_ixmlparser()
@@ -472,6 +556,23 @@ void test_devices()
 
 void test_linkmodes()
 {
+    LinkModeSet cct = parseLinkModes("cct");
+    assert(cct.has(LinkMode::CCT));
+    assert(cct.hr() == "cct");
+    assert(toLinkMode("cct") == LinkMode::CCT);
+    assert(isLinkModeOption("--cct") == LinkMode::CCT);
+    assert(!strcmp(toString(LinkMode::CCT), "cct"));
+    assert(cct.asBits() == CCT_bit);
+    assert(countSetBits(cct.asBits()) == 1);
+    assert(setupIMSTBusDeviceToReceiveTelegrams(cct) == LINK_MODE_CUSTOM_CT);
+
+    LinkModeSet all;
+    all.setAll();
+    assert(all.has(LinkMode::CCT));
+
+    LinkModeSet ct = parseLinkModes("c1,t1");
+    assert(setupIMSTBusDeviceToReceiveTelegrams(ct) == LINK_MODE_CT);
+
     /*
     LinkModeCalculationResult lmcr;
     auto manager = createSerialCommunicationManager(0, false);
@@ -934,6 +1035,45 @@ void test_kdf()
     {
         printf("ERROR in aes-cmac expected \"%s\" but got \"%s\"\n", ex.c_str(), s.c_str());
     }
+}
+
+void test_aes_ccm_tag()
+{
+    // Worked examples N.2.6 and N.5 from the OMS spec (security profile D,
+    // security mode 10), using the Kenc given in the spec.
+    vector<uchar> key;
+    vector<uchar> nonce;
+    vector<uchar> aad;
+    vector<uchar> pt;
+
+    hex2bin("ECCF39D475D730B8284FDFDC1995D52F", &key);
+
+    hex2bin("93157856341233030000000AB3", &nonce);
+    hex2bin("7A7500112A1001", &aad);
+    hex2bin("0C1427048502046D32371F1502FD170000", &pt);
+    vector<uchar> tag = compute_TPL_AES_CCM_tag(key, safeButUnsafeVectorPtr(nonce), aad, pt, 8);
+    string s = bin2hex(tag);
+    string ex = "5AF7883A5B5A7FD6";
+    if (s != ex)
+    {
+        printf("ERROR in aes-ccm-tag expected \"%s\" but got \"%s\"\n", ex.c_str(), s.c_str());
+    }
+    assert(s == ex);
+
+    nonce.clear();
+    aad.clear();
+    pt.clear();
+    hex2bin("A73D7856341201070000000AB3", &nonce);
+    hex2bin("7A0500492A1001", &aad);
+    hex2bin("0C1379194100026CB2184C139432380082046C81118C0413905234008D04931F23FBFE60260039390034310068340010420078310010540030180086190064240003410002FD170000", &pt);
+    tag = compute_TPL_AES_CCM_tag(key, safeButUnsafeVectorPtr(nonce), aad, pt, 8);
+    s = bin2hex(tag);
+    ex = "E41370F8741B9D99";
+    if (s != ex)
+    {
+        printf("ERROR in aes-ccm-tag expected \"%s\" but got \"%s\"\n", ex.c_str(), s.c_str());
+    }
+    assert(s == ex);
 }
 
 void testp(time_t now, string period, bool expected)
@@ -1769,6 +1909,153 @@ void test_translate()
 
 }
 
+void test_translate_unknown_bits()
+{
+    // BitToString with explicit mask 0xf0, but map entries only cover 0x10/0x20/0x40,
+    // so 0x80 is inside the mask yet has no map entry -> it is an "unknown" bit.
+    // Also has an IndexToString rule which must never contribute unknowns or names.
+    Translate::Lookup lookup =
+        Translate::Lookup()
+        .add(Translate::Rule("FLAGS", Translate::MapType::BitToString)
+             .set(MaskBits(0xf0))
+             .add(Translate::Map(0x10, "A", TestBit::Set))
+             .add(Translate::Map(0x20, "B", TestBit::Set))
+             .add(Translate::Map(0x40, "C", TestBit::Set))
+             )
+        .add(Translate::Rule("INDEX", Translate::MapType::IndexToString)
+             .set(MaskBits(0x0f))
+             .add(Translate::Map(0x00, "IDX0", TestBit::Set))
+             )
+        ;
+
+    // 0x80: in-mask but uncovered -> unknown = 0x80.
+    {
+        auto u = lookup.unknownBits(0x80);
+        if (u.size() != 1) { printf("ERROR unknownBits(0x80): expected 1 rule, got %zu\n", u.size()); }
+        auto i = u.find("FLAGS");
+        if (i == u.end()) { printf("ERROR unknownBits(0x80): expected FLAGS key\n"); }
+        else if (i->second != 0x80) { printf("ERROR unknownBits(0x80): expected 0x80 got 0x%llx\n", (unsigned long long)i->second); }
+    }
+
+    // 0xb0: covered bits also set; only 0x80 remains unknown.
+    {
+        auto u = lookup.unknownBits(0x80 | 0x10 | 0x20);
+        auto i = u.find("FLAGS");
+        if (i == u.end() || i->second != 0x80) { printf("ERROR unknownBits(0xb0): expected FLAGS=0x80\n"); }
+    }
+
+    // 0x30: only covered bits set -> the rule is still reported, with unknown 0.
+    {
+        auto u = lookup.unknownBits(0x30);
+        auto i = u.find("FLAGS");
+        if (i == u.end() || i->second != 0) { printf("ERROR unknownBits(0x30): expected FLAGS=0\n"); }
+    }
+
+    // flagNames: only BitToString "to" names, IndexToString names excluded.
+    {
+        auto n = lookup.flagNames();
+        string j;
+        for (string s : n) j += s + ",";
+        if (j != "A,B,C,") { printf("ERROR flagNames: expected \"A,B,C,\" got \"%s\"\n", j.c_str()); }
+    }
+
+    // AutoMask rules still report 0: with no explicit mask their span is the OR of
+    // their map bits, so every bit they touch is by definition mapped.
+    {
+        Translate::Lookup am =
+            Translate::Lookup()
+            .add(Translate::Rule("AUTO", Translate::MapType::BitToString)
+                 .add(Translate::Map(0x01, "X", TestBit::Set))
+                 .add(Translate::Map(0x02, "Y", TestBit::Set))
+                 )
+            ;
+        auto u = am.unknownBits(0xff);
+        auto i = u.find("AUTO");
+        if (i == u.end() || i->second != 0) { printf("ERROR auto unknownBits: expected AUTO=0\n"); }
+    }
+
+    // A rule whose trigger bits are not present in the input must be skipped.
+    {
+        Translate::Lookup tr =
+            Translate::Lookup()
+            .add(Translate::Rule("TRIG", Translate::MapType::BitToString)
+                 .set(TriggerBits(0x02))
+                 .set(MaskBits(0x38))
+                 .add(Translate::Map(0x08, "T1", TestBit::Set))
+                 )
+            ;
+        // 0x20 is unknown for the rule, but the trigger bit 0x02 is not set -> skipped.
+        auto u = tr.unknownBits(0x20);
+        if (u.find("TRIG") != u.end()) { printf("ERROR trigger not set should be skipped\n"); }
+        // With the trigger bit set, 0x20 is reported as unknown.
+        auto u2 = tr.unknownBits(0x20 | 0x02);
+        auto i = u2.find("TRIG");
+        if (i == u2.end() || i->second != 0x20) { printf("ERROR trigger set should report TRIG=0x20\n"); }
+    }
+
+}
+
+void test_translate_pre_shift_right()
+{
+    // Mimics kamwater's duration-bucket encoding (0=none, 1=1-8h, 2=9-24h, 3=2-3 days, ...)
+    // which needs to be reused at several different bit offsets within the same status word,
+    // instead of duplicating the same map{} table once per offset.
+    Translate::Lookup duration =
+        Translate::Lookup()
+        .add(Translate::Rule("DURATION", Translate::MapType::IndexToString)
+             .set(MaskBits(0x0007))
+             .set(PreShiftRight(4))
+             .add(Translate::Map(0, "none"))
+             .add(Translate::Map(1, "1-8 hours"))
+             .add(Translate::Map(2, "9-24 hours"))
+             .add(Translate::Map(3, "2-3 days"))
+            );
+
+    // Index 2 ("9-24 hours") lives at bits 4-6, ie 0b010 << 4 = 0x20.
+    string s = duration.translate(0x0020);
+    string e = "9-24 hours";
+    if (s != e)
+    {
+        printf("ERROR translate_pre_shift_right 0x%x expected \"%s\" but got \"%s\"\n", 0x0020, e.c_str(), s.c_str());
+    }
+
+    // Without the shift, the very same raw bits are misread as index 0 ("none"),
+    // proving the shift is actually applied before matching, not ignored.
+    Translate::Lookup no_shift =
+        Translate::Lookup()
+        .add(Translate::Rule("DURATION", Translate::MapType::IndexToString)
+             .set(MaskBits(0x0007))
+             .add(Translate::Map(0, "none"))
+             .add(Translate::Map(1, "1-8 hours"))
+             .add(Translate::Map(2, "9-24 hours"))
+             .add(Translate::Map(3, "2-3 days"))
+            );
+    s = no_shift.translate(0x0020);
+    e = "none";
+    if (s != e)
+    {
+        printf("ERROR translate_pre_shift_right (no shift) 0x%x expected \"%s\" but got \"%s\"\n", 0x0020, e.c_str(), s.c_str());
+    }
+
+    // The shift also applies to translateToObject (used when adding structured)
+    Translate::Lookup flags =
+        Translate::Lookup()
+        .add(Translate::Rule("FLAGS", Translate::MapType::BitToString)
+             .set(MaskBits(0x0003))
+             .set(PreShiftRight(8))
+             .add(Translate::Map(0x01, "DRY"))
+             .add(Translate::Map(0x02, "LEAK"))
+            );
+
+    // DRY (bit 0 after shift) and LEAK (bit 1 after shift) live at bits 8 and 9 of the raw value.
+    map<string,bool> obj = flags.translateToObject(0x0100);
+    if (obj["DRY"] != true || obj["LEAK"] != false)
+    {
+        printf("ERROR translate_pre_shift_right object 0x100 expected DRY=true LEAK=false but got DRY=%d LEAK=%d\n",
+               obj["DRY"], obj["LEAK"]);
+    }
+}
+
 void test_slip()
 {
     vector<uchar> from = { 1, 0xc0, 3, 4, 5, 0xdb };
@@ -1831,6 +2118,236 @@ void test_slip()
         printf("ERROR slip 7\n");
     }
 
+}
+
+void test_iu891a_slip()
+{
+    // Build a valid non-IND frame: endpoint, msg_id, status, payload, crc16.
+    auto make_frame = [](vector<uchar> &msg)
+    {
+        // `msg` holds all data bytes except the trailing 2-byte CRC.
+        uint16_t crc = ~crc16_CCITT(&msg[0], msg.size());
+        msg.push_back(crc & 0xff);
+        msg.push_back((crc >> 8) & 0xff);
+    };
+
+    // 1. Empty buffer (receive() delivered zero bytes): must be PartialFrame, NOT
+    //    ErrorInFrame, and leave frame_length_out at zero so callers branch safely.
+    {
+        vector<uchar> data;
+        FrameStatus status;
+        size_t len = 0xff;
+        vector<uchar> out;
+        int ep = 0, mid = 0, st = 0, rssi = 0;
+        status = iu891a_check_frame(data, out, &len, &ep, &mid, &st, &rssi);
+        if (status != PartialFrame)
+            printf("ERROR iu891a_slip 1: empty buffer should be PartialFrame, got %s\n", toString(status));
+        if (len != 0)
+            printf("ERROR iu891a_slip 1: empty buffer should set frame_length=0, got %zu\n", len);
+        if (!out.empty())
+            printf("ERROR iu891a_slip 1: empty buffer should produce no payload\n");
+    }
+
+    // 2. Only SLIP END markers (C0): holding leading C0s before the payload arrives
+    //    (byte-at-a-time feeding) must stay PartialFrame, not ErrorInFrame.
+    {
+        vector<uchar> data = { 0xc0, 0xc0, 0xc0 };
+        FrameStatus status;
+        size_t len = 0;
+        vector<uchar> out;
+        int ep = 0, mid = 0, st = 0, rssi = 0;
+        status = iu891a_check_frame(data, out, &len, &ep, &mid, &st, &rssi);
+        if (status != PartialFrame)
+            printf("ERROR iu891a_slip 2: all-C0 buffer should be PartialFrame, got %s\n", toString(status));
+    }
+
+    // 3. A well-formed complete frame must decode to FullFrame with header + payload.
+    {
+        vector<uchar> msg = { 0x01, 0x04, 0x00, 0xde, 0xad, 0xbe, 0xef };
+        make_frame(msg);
+
+        vector<uchar> raw;
+        addSlipFraming(msg, raw);
+
+        FrameStatus status;
+        size_t len = 0;
+        vector<uchar> out;
+        int ep = 0, mid = 0, st = 0, rssi = 0;
+        status = iu891a_check_frame(raw, out, &len, &ep, &mid, &st, &rssi);
+
+        if (status != FullFrame)
+        {
+            printf("ERROR iu891a_slip 3: complete frame should be FullFrame, got %s\n", toString(status));
+            return;
+        }
+        if (ep != 0x01 || mid != 0x04 || st != 0x00)
+            printf("ERROR iu891a_slip 3: bad header ep=%d mid=%d st=%d\n", ep, mid, st);
+        vector<uchar> expected = { 0xde, 0xad, 0xbe, 0xef };
+        if (out != expected)
+            printf("ERROR iu891a_slip 3: bad payload (got %zu bytes)\n", out.size());
+    }
+
+    // 4. A SLIP-completed frame that deslips to fewer than 5 bytes is genuinely
+    //    too short -> ErrorInFrame (this is the pre-existing <5 behaviour).
+    {
+        vector<uchar> msg = { 0x01, 0x02 };   // 2 bytes + 2 crc = 4 < 5
+        make_frame(msg);
+
+        vector<uchar> raw;
+        addSlipFraming(msg, raw);
+
+        FrameStatus status;
+        size_t len = 0;
+        vector<uchar> out;
+        int ep = 0, mid = 0, st = 0, rssi = 0;
+        status = iu891a_check_frame(raw, out, &len, &ep, &mid, &st, &rssi);
+        if (status != ErrorInFrame)
+            printf("ERROR iu891a_slip 4: too-short frame should be ErrorInFrame, got %s\n", toString(status));
+    }
+
+    // 5. Byte-at-a-time: a frame accumulated one receive() byte at a time must read
+    //    as PartialFrame for every incomplete prefix, then FullFrame when complete.
+    {
+        vector<uchar> msg = { 0x09, 0x20, 0xde, 0xad };
+        make_frame(msg);
+        vector<uchar> raw;
+        addSlipFraming(msg, raw);
+
+        vector<uchar> buf;
+        for (size_t i = 0; i < raw.size(); i++)
+        {
+            buf.push_back(raw[i]);
+            FrameStatus status;
+            size_t len = 0;
+            vector<uchar> out;
+            int ep = 0, mid = 0, st = 0, rssi = 0;
+            status = iu891a_check_frame(buf, out, &len, &ep, &mid, &st, &rssi);
+            if (i < raw.size()-1 && status == FullFrame)
+                printf("ERROR iu891a_slip 5: incomplete prefix (%zu/%zu) must not be FullFrame\n", i+1, raw.size());
+        }
+
+        FrameStatus status;
+        size_t len = 0;
+        vector<uchar> out;
+        int ep = 0, mid = 0, st = 0, rssi = 0;
+        status = iu891a_check_frame(buf, out, &len, &ep, &mid, &st, &rssi);
+        if (status != FullFrame)
+            printf("ERROR iu891a_slip 5: complete frame should be FullFrame, got %s\n", toString(status));
+    }
+
+    // 6. Collapse of an over-long leading run of 0xc0.
+    auto run_of = [](size_t n)
+    {
+        vector<uchar> v;
+        v.reserve(n + 1);
+        v.resize(n, 0xc0);
+        return v;
+    };
+
+    // 150 leading 0xc0 -> collapsed to a single one.
+    {
+        vector<uchar> buf = run_of(150);
+        iu891a_collapse_excess_end(buf, 100);
+        if (buf.size() != 1 || buf[0] != 0xc0)
+            printf("ERROR iu891a_slip 6: 150 c0 should collapse to 1, got %zu\n", buf.size());
+    }
+
+    // Exactly at the limit (100) -> left untouched.
+    {
+        vector<uchar> buf = run_of(100);
+        iu891a_collapse_excess_end(buf, 100);
+        if (buf.size() != 100)
+            printf("ERROR iu891a_slip 6: 100 c0 (== limit) should be kept, got %zu\n", buf.size());
+    }
+
+    // Just over the limit (101) -> collapsed to a single one.
+    {
+        vector<uchar> buf = run_of(101);
+        iu891a_collapse_excess_end(buf, 100);
+        if (buf.size() != 1 || buf[0] != 0xc0)
+            printf("ERROR iu891a_slip 6: 101 c0 should collapse to 1, got %zu\n", buf.size());
+    }
+
+    // Leading 0xc0-run + a partially-received payload: only the run collapses, the
+    // payload bytes are preserved.
+    {
+        vector<uchar> buf = run_of(250);
+        buf.push_back(0x09);   // first payload byte arrives after a C0 flood
+        buf.push_back(0x20);
+        iu891a_collapse_excess_end(buf, 100);
+        if (buf.size() != 3 || buf[0] != 0xc0 || buf[1] != 0x09 || buf[2] != 0x20)
+            printf("ERROR iu891a_slip 6: c0-run + payload should become {c0,09,20}, got %zu bytes\n", buf.size());
+    }
+
+    // No leading 0xc0 -> untouched regardless of size.
+    {
+        vector<uchar> buf = { 0x09, 0x20, 0xde };
+        iu891a_collapse_excess_end(buf, 100);
+        if (buf.size() != 3)
+            printf("ERROR iu891a_slip 6: buffer without leading c0 must be untouched, got %zu\n", buf.size());
+    }
+
+    // End-to-end: a valid SLIP frame hidden behind a 150-byte C0 flood still decodes.
+    {
+        vector<uchar> msg = { 0x07, 0x11, 0x02, 0xaa, 0x55 };
+        make_frame(msg);
+
+        vector<uchar> escaped;
+        addSlipFraming(msg, escaped);
+
+        vector<uchar> raw = run_of(150);   // flood of idle C0s before the real frame
+        raw.insert(raw.end(), escaped.begin(), escaped.end());
+
+        iu891a_collapse_excess_end(raw, 100);
+
+        FrameStatus status;
+        size_t len = 0;
+        vector<uchar> out;
+        int ep = 0, mid = 0, st = 0, rssi = 0;
+        status = iu891a_check_frame(raw, out, &len, &ep, &mid, &st, &rssi);
+        if (status != FullFrame)
+            printf("ERROR iu891a_slip 6: frame behind c0 flood should still be FullFrame, got %s\n", toString(status));
+    }
+
+    // 7. A bogus short frame (a single 0x55 byte) in front of a real frame must NOT
+    //    drop the real frame. The classifier must report a usable consumed-offset
+    //    (frame_length > 0) for the bad frame, and advancing past it (as
+    //    processSerialData now does) must leave the real frame to decode to FullFrame.
+    {
+        vector<uchar> buf;
+        buf.push_back(0xc0); buf.push_back(0x55); buf.push_back(0xc0);   // bogus 1-byte frame
+
+        vector<uchar> real = { 0x03, 0x20, 0x00, 0xab, 0xcd };
+        make_frame(real);
+        vector<uchar> escaped;
+        addSlipFraming(real, escaped);
+        buf.insert(buf.end(), escaped.begin(), escaped.end());           // real frame right behind
+
+        size_t original_size = buf.size();
+        FrameStatus status;
+        size_t len = 0;
+        vector<uchar> out;
+        int ep = 0, mid = 0, st = 0, rssi = 0;
+        status = iu891a_check_frame(buf, out, &len, &ep, &mid, &st, &rssi);
+
+        if (status != ErrorInFrame)
+            printf("ERROR iu891a_slip 7: first (bogus) frame should be ErrorInFrame, got %s\n", toString(status));
+        if (len == 0 || len >= original_size)
+            printf("ERROR iu891a_slip 7: bad frame must report usable offset < buffer, got %zu / %zu\n", len, original_size);
+
+        // Guard so the erase below is always valid even on the above (failed) check.
+        if (len == 0 || len >= original_size) return;
+
+        // Advance past the bogus frame, exactly as processSerialData does.
+        buf.erase(buf.begin(), buf.begin()+len);
+
+        status = iu891a_check_frame(buf, out, &len, &ep, &mid, &st, &rssi);
+        if (status != FullFrame)
+            printf("ERROR iu891a_slip 7: real frame should still be FullFrame after skipping bogus one, got %s\n", toString(status));
+        vector<uchar> expected = { 0xab, 0xcd };
+        if (out != expected)
+            printf("ERROR iu891a_slip 7: bad real-frame payload after skip (got %zu bytes)\n", out.size());
+    }
 }
 
 void test_dvs()
@@ -2250,7 +2767,7 @@ LIST_OF_QUANTITIES
     // 100 hours is 100/24 days.
     test_si_convert(100.0, 100.0/24.0, Unit::Hour, "h", Unit::Day, "d", Quantity::Time, &from_set, &to_set);
     // 1 year is 365.2425 days.
-//    test_si_convert(1.0, 365.2425, Unit::Year, "y", Unit::Day, "d", Quantity::Time, &from_set, &to_set);
+    //test_si_convert(1.0, 365.2425, Unit::Year, "y", Unit::Day, "d", Quantity::Time, &from_set, &to_set);
 
     check_units_tested(from_set, to_set, Quantity::Time);
 
@@ -2325,6 +2842,10 @@ LIST_OF_QUANTITIES
     test_si_convert(10, 2.7777777777777777, Unit::MJ, "mj", Unit::KWH, "kwh", Quantity::Energy, &from_set, &to_set);
     // 1 ws = 1/3600000 kwh is 1 j = 0.000001 MJ
     test_si_convert(1.0/3600000.0, 0.000001, Unit::KWH, "kwh", Unit::MJ, "mj", Quantity::Energy, &from_set, &to_set);
+    // 1 gcal is 1163 kwh
+    test_si_convert(1.0, 1163, Unit::GCAL, "gcal", Unit::KWH, "kwh", Quantity::Energy, &from_set, &to_set);
+    // 1kwh is 1/1163 gcal
+    test_si_convert(1.0, 1.0/1163, Unit::KWH, "kwh", Unit::GCAL, "gcal", Quantity::Energy, &from_set, &to_set);
 
     // 99 m3c = 99 m3c this is the only test we can do with the m3c energy unit,
     // which cannot be converted into other energy units since we lack the density of the water etc.
@@ -2561,9 +3082,13 @@ LIST_OF_QUANTITIES
     // Test text unit: text
     /////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    // I do not know how to handle the text unit yet.
+    // I do not know how to handle the text quantity yet.
     // Mark it as tested....
     q_set.erase(Quantity::Text);
+
+    // I do not know how to handle the flags quantity yet.
+    // Mark it as tested....
+    q_set.erase(Quantity::Flags);
 
     check_quantities_tested(q_set);
 }
@@ -2657,7 +3182,7 @@ void test_formulas_building_meters()
         assert(lookupDriverInfo("multical21"));
         mi.parse("testur", "multical21", "12345678", "");
         shared_ptr<Meter> meter = createMeter(&mi);
-        FieldInfo *fi_flow = meter->findFieldInfo("flow_temperature", Quantity::Temperature);
+        FieldInfo *fi_flow = meter->findFieldInfo("min_flow_temperature_last_month", Quantity::Temperature);
         FieldInfo *fi_ext = meter->findFieldInfo("min_external_temperature_last_month", Quantity::Temperature);
         assert(fi_flow != NULL);
         assert(fi_ext != NULL);

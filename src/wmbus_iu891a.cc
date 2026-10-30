@@ -178,6 +178,10 @@ struct Config_IU891A
         {
             link_modes.addLinkMode(LinkMode::C1);
         }
+        else if (c == LINK_MODE_CUSTOM_CT)
+        {
+            link_modes.addLinkMode(LinkMode::CCT);
+        }
         option_bits = bytes[i+1]<<8 | bytes[i+0];
         i += 2;
         ui_option_bits = bytes[i+1]<<8 | bytes[i+0];
@@ -253,7 +257,8 @@ struct WMBusIU891A : public BusDeviceCommonImplementation
             S1_bit |
             S1m_bit |
             T1_bit |
-            T2_bit;
+            T2_bit |
+            CCT_bit;
     }
 
     int numConcurrentLinkModes()
@@ -432,7 +437,11 @@ void WMBusIU891A::deviceReset()
 
 uchar setupIMSTBusDeviceToReceiveTelegrams(LinkModeSet lms)
 {
-    if (lms.has(LinkMode::C1) && lms.has(LinkMode::T1))
+    if (lms.has(LinkMode::CCT))
+    {
+        return LINK_MODE_CUSTOM_CT;
+    }
+    else if (lms.has(LinkMode::C1) && lms.has(LinkMode::T1))
     {
         return LINK_MODE_CT;
     }
@@ -527,15 +536,23 @@ FrameStatus WMBusIU891A::checkIU891AFrame(vector<uchar> &data,
 {
     vector<uchar> msg;
 
-    if (slipAllEND(data)) return ErrorInFrame; // Discard this part, since it is all C0.
+    // No bytes at all: nothing to parse yet, wait for more. Leave frame_length_out
+    // at zero so callers that branch on == 0 never read an indeterminate value.
+    if (data.size() == 0) { *frame_length_out = 0; return PartialFrame; }
 
     removeSlipFraming(data, frame_length_out, msg);
 
     // If frame_length_out is zero, then no END slip frame marker was found.
     // Collect some more.
     if (*frame_length_out == 0) return PartialFrame;
+
     // If the msg is less than five bytes, discard this frame.
-    if (msg.size() < 5) return ErrorInFrame;
+    if (msg.size() < 5)
+    {
+        debugPayload("(iu891a) discarding too short frame", data);
+
+        return ErrorInFrame;
+    }
 
     *endpoint_id_out = msg[0];
     *msg_id_out = msg[1];
@@ -570,6 +587,41 @@ FrameStatus WMBusIU891A::checkIU891AFrame(vector<uchar> &data,
     return FullFrame;
 }
 
+// Test seam: expose the frame classifier (a static member of a struct that is
+// only defined in this translation unit) so it can be unit-tested directly.
+FrameStatus iu891a_check_frame(vector<uchar> &data,
+                               vector<uchar> &out,
+                               size_t *frame_length_out,
+                               int *endpoint_id_out,
+                               int *msg_id_out,
+                               int *status_byte_out,
+                               int *rssi_dbm)
+{
+    return WMBusIU891A::checkIU891AFrame(data, out, frame_length_out,
+                                         endpoint_id_out, msg_id_out,
+                                         status_byte_out, rssi_dbm);
+}
+
+// Idle dongles (and virtualised tty's) happily stream SLIP END (0xc0) bytes.
+// The leading run of 0xc0s is pure padding - removeSlipFraming skips them - so a
+// long run can only grow the buffer. Collapse an over-long leading run down to a
+// single delimiter to keep the buffer bounded. Because a buffer that still needs
+// more bytes (PartialFrame) has all its 0xc0s in the leading run (any 0xc0 after
+// that would be a closing delimiter and the frame would already be complete), this
+// never touches a real payload or CRC byte.
+void iu891a_collapse_excess_end(vector<uchar> &buf, size_t limit)
+{
+    size_t i = 0;
+    while (i < buf.size() && buf[i] == 0xc0) i++;   // i == length of leading 0xc0 run
+
+    if (i <= limit) return;
+
+    debug("(iu891a) collapsing %zu excess leading 0xc0 down to one\n", i);
+
+    // Keep a single 0xc0, drop the rest of the leading run.
+    buf.erase(buf.begin()+1, buf.begin()+i);
+}
+
 void WMBusIU891A::processSerialData()
 {
     vector<uchar> data;
@@ -578,6 +630,9 @@ void WMBusIU891A::processSerialData()
     serial()->receive(&data);
 
     read_buffer_.insert(read_buffer_.end(), data.begin(), data.end());
+
+    // Idle dongles (and virtualised tty's) happily stream SLIP END (0xc0) bytes.
+    iu891a_collapse_excess_end(read_buffer_, 100);
 
     size_t frame_length;
     int endpoint_id;
@@ -599,29 +654,38 @@ void WMBusIU891A::processSerialData()
 
         if (status == PartialFrame)
         {
-            if (read_buffer_.size() > 0)
+            // Incomplete frame: keep the buffer and wait for more bytes next pass.
+            if (!read_buffer_.empty())
             {
                 debugPayload("(iu891a) partial frame, expecting more.", read_buffer_);
             }
             break;
         }
+
+        // Both a complete (FullFrame) and an invalid (ErrorInFrame) message consume
+        // exactly frame_length bytes (guaranteed > 0 here), so advance past just those.
+        // Never clear the whole buffer: a valid frame that followed in the same
+        // read_buffer_ must still be seen even if a short/bad-crc frame sits in front
+        // of it, e.g. 'C0 55 C0 <realframe> C0'.
+        read_buffer_.erase(read_buffer_.begin(), read_buffer_.begin()+frame_length);
+
         if (status == ErrorInFrame)
         {
-            debugPayload("(iu891a) bad frame, clearing.", read_buffer_);
-            read_buffer_.clear();
-            break;
+            debugPayload("(iu891a) bad frame, skipping past it.", read_buffer_);
+            continue;   // a good frame can still follow, so keep parsing the remainder
         }
+
         if (status == FullFrame)
         {
-            read_buffer_.erase(read_buffer_.begin(), read_buffer_.begin()+frame_length);
-
             // We now have a proper message in payload. Let us trigger actions based on it.
             // It can be wmbus receiver-dongle messages or wmbus remote meter messages received over the radio.
             switch (endpoint_id) {
             case SAP_DEVMGMT_ID: handleDevMgmt(msg_id, payload); break;
             case SAP_WMBUSGW_ID: handleWMbusGateway(msg_id, payload); break;
             }
+            // loop again to process any further complete frames left in the buffer
         }
+        // No other FrameStatus is reachable from checkIU891AFrame here.
     }
 }
 

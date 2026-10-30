@@ -3,6 +3,7 @@ driver {
     name           = ei6500
     meter_type     = SmokeDetector
     default_fields = name,id,status,last_alarm_date,alarm_counter,timestamp
+    manufacturer   = 'Ei Electronics'
     detect {
         mvt = EIE,0c,1a
     }
@@ -18,10 +19,96 @@ driver {
             test  = set
         }
     }
+    flags {
+        flag {
+            name = RTC_INVALID
+            info = 'The real time clock of the smoke detector is invalid.'
+        }
+        flag {
+            name = UNKNOWN_FIELD_C
+            info = 'The smoke detector received a telegram with an unknown C field.'
+        }
+        flag {
+            name = UNKNOWN_FIELD_CI
+            info = 'The smoke detector received a telegram with an unknown CI field.'
+        }
+        flag {
+            name = UNKNOWN_RECORD
+            info = 'The smoke detector received a request for an unknown record.'
+        }
+        flag {
+            name = ACCESS_RIGHT
+            info = 'The smoke detector refused a request because of missing access rights.'
+        }
+        flag {
+            name = RECORD_SIZE
+            info = 'The smoke detector received a record with a wrong size.'
+        }
+        flag {
+            name = RECORD_VALUE
+            info = 'The smoke detector received a record with a wrong value.'
+        }
+        flag {
+            name = BAD_PASSWORD
+            info = 'The smoke detector received a wrong password.'
+        }
+        flag {
+            name = SOUNDER_FAULT
+            info = 'The sounder of the smoke detector is faulty.'
+        }
+        flag {
+            name = TAMPER_WHILE_REMOVED
+            info = 'The smoke detector was tampered with while it was removed from its base.'
+        }
+        flag {
+            name = EOL_REACHED
+            info = 'The smoke detector has reached its end of life and must be replaced.'
+        }
+        flag {
+            name = LOW_BATTERY_FAULT
+            info = 'The battery is low.'
+        }
+        flag {
+            name = ALARM_SENSOR_FAULT
+            info = 'The smoke sensor is faulty.'
+        }
+        flag {
+            name = OBSTACLE_DETECTOR_FAULT
+            info = 'The obstacle detection is faulty.'
+        }
+        flag {
+            name = EOL_WITHIN_12_MONTH
+            info = 'The smoke detector reaches its end of life within 12 months.'
+        }
+        flag {
+            name = SEODS_NOT_YET_COMPLETED
+            info = 'Unknown flag, please contact the wmbusmeters project to contribute knowledge.'
+        }
+        flag {
+            name = ENV_CHANGED_SINCE_INSTALLATION
+            info = 'The surroundings of the smoke detector have changed since installation.'
+        }
+        flag {
+            name = COMM_TO_HEAD_FAULT
+            info = 'The communication with the detector head has failed.'
+        }
+        flag {
+            name = INTERFERENCE_PREVENTING_OBSTACLE_DETECTION
+            info = 'Interference prevents the obstacle detection.'
+        }
+        flag {
+            name = OBSTACLE_DETECTED
+            info = 'An obstacle has been detected near the smoke detector.'
+        }
+        flag {
+            name = SMOKE_DETECTOR_FULLY_COVERED
+            info = 'The smoke detector is fully covered.'
+        }
+    }
     fields {
         field {
             name            = status
-            quantity        = Text
+            quantity        = Flags
             info            = 'Meter error flags. IMPORTANT! Smoke alarm is NOT reported here! You MUST check last alarm date and counter!'
             attributes      = STATUS,INCLUDE_TPL_STATUS
             default_message = OK
@@ -202,10 +289,10 @@ driver {
             }
         }
         field {
-            name       = dust_level
-            quantity   = Text
-            attributes = DEPRECATED
-            info       = 'Dust level 0 (best) to 31 (worst). Deprecated. Use dust_level_counter instead.'
+            name          = dust_level
+            quantity      = Text
+            deprecated_by = 'dust_level_counter, update before 2026-12-01'
+            info          = 'Dust level 0 (best) to 31 (worst). Deprecated. Use dust_level_counter instead.'
             match {
                 difvifkey = 8440FF2C
             }
@@ -224,7 +311,7 @@ driver {
         }
         field {
             name       = dust_status
-            quantity   = Text
+            quantity   = Flags
             info       = 'Status of smoke detector sensors, merged into the status field.'
             attributes = INJECT_INTO_STATUS,HIDE
             match {
@@ -427,7 +514,7 @@ driver {
         }
         field {
             name       = head_status
-            quantity   = Text
+            quantity   = Flags
             info       = 'Status of smoke detector sensors, merged into the status field.'
             attributes = INJECT_INTO_STATUS,HIDE
             match {
@@ -513,39 +600,39 @@ driver {
         test {
             args     = 'Smokey1 ei6500 01097274 NOKEY'
             telegram = 58442515747209010C1A7A8B0000000BFD0F070101046D2A06D82502FD17000082206CD825426CD0238440FF2C000F11008250FD61000082506C01018260FD6100008360FD3100000082606C01018270FD61000082706C0101
-            json     = '{"_":"telegram","media":"smoke detector","meter":"ei6500","name":"Smokey1","id":"01097274","status":"OK","last_alarm_date":"2000-01-01","alarm_counter":0,"software_version":"010107","message_datetime":"2022-05-24 06:42","duration_removed_h":0,"last_remove_date":"2000-01-01","removed_counter":0,"test_button_last_date":"2000-01-01","test_button_counter":0,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_0","dust_level_counter":0,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"smoke detector","driver":"ei6500","name":"Smokey1","id":"01097274","status":"OK","last_alarm_date":"2000-01-01","alarm_counter":0,"software_version":"010107","message_datetime":"2022-05-24 06:42","duration_removed_h":0,"last_remove_date":"2000-01-01","removed_counter":0,"test_button_last_date":"2000-01-01","test_button_counter":0,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_0","dust_level_deprecated_by": "dust_level_counter, update before 2026-12-01","dust_level_counter":0,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'Smokey1;01097274;OK;2000-01-01;0;1111-11-11 11:11.11'
         }
         test {
             args     = 'Smokey2 ei6500 01097274 NOKEY'
             telegram = 58442515747209010C1A7A8D0000000BFD0F070101046D2E06D82502FD17000082206CD825426CD0238440FF2C000F11008250FD61000082506C01018260FD6100008360FD3100000082606C01018270FD61020082706CD825
-            json     = '{"_":"telegram","media":"smoke detector","meter":"ei6500","name":"Smokey2","id":"01097274","status":"OK","last_alarm_date":"2000-01-01","alarm_counter":0,"software_version":"010107","message_datetime":"2022-05-24 06:46","duration_removed_h":0,"last_remove_date":"2000-01-01","removed_counter":0,"test_button_last_date":"2022-05-24","test_button_counter":2,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_0","dust_level_counter":0,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"smoke detector","driver":"ei6500","name":"Smokey2","id":"01097274","status":"OK","last_alarm_date":"2000-01-01","alarm_counter":0,"software_version":"010107","message_datetime":"2022-05-24 06:46","duration_removed_h":0,"last_remove_date":"2000-01-01","removed_counter":0,"test_button_last_date":"2022-05-24","test_button_counter":2,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_0","dust_level_deprecated_by": "dust_level_counter, update before 2026-12-01","dust_level_counter":0,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'Smokey2;01097274;OK;2000-01-01;0;1111-11-11 11:11.11'
         }
         test {
             args     = 'Smokey3 ei6500 01097274 NOKEY'
             telegram = 58442515747209010C1A7A900000000BFD0F070101046D3406D82502FD17000082206CD825426CD0238440FF2C020F11008250FD61010082506CD8258260FD6100008360FD3100000082606C01018270FD61020082706CD825
-            json     = '{"_":"telegram","media":"smoke detector","meter":"ei6500","name":"Smokey3","id":"01097274","status":"OK","last_alarm_date":"2022-05-24","alarm_counter":1,"software_version":"010107","message_datetime":"2022-05-24 06:52","duration_removed_h":0,"last_remove_date":"2000-01-01","removed_counter":0,"test_button_last_date":"2022-05-24","test_button_counter":2,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_2","dust_level_counter":2,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"smoke detector","driver":"ei6500","name":"Smokey3","id":"01097274","status":"OK","last_alarm_date":"2022-05-24","alarm_counter":1,"software_version":"010107","message_datetime":"2022-05-24 06:52","duration_removed_h":0,"last_remove_date":"2000-01-01","removed_counter":0,"test_button_last_date":"2022-05-24","test_button_counter":2,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_2","dust_level_deprecated_by": "dust_level_counter, update before 2026-12-01","dust_level_counter":2,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'Smokey3;01097274;OK;2022-05-24;1;1111-11-11 11:11.11'
         }
         test {
             args     = 'Smokey4 ei6500 01097274 NOKEY'
             telegram = 58442515747209010C1A7A940000000BFD0F070101046D0007D82502FD17000082206CD825426CD0238440FF2C420F11008250FD61010082506CD8258260FD6101008360FD3101000082606CD8258270FD61020082706CD825
-            json     = '{"_":"telegram","media":"smoke detector","meter":"ei6500","name":"Smokey4","id":"01097274","status":"TAMPER_WHILE_REMOVED","last_alarm_date":"2022-05-24","alarm_counter":1,"software_version":"010107","message_datetime":"2022-05-24 07:00","duration_removed_h":0.016667,"last_remove_date":"2022-05-24","removed_counter":1,"test_button_last_date":"2022-05-24","test_button_counter":2,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_2","dust_level_counter":2,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"smoke detector","driver":"ei6500","name":"Smokey4","id":"01097274","status":"TAMPER_WHILE_REMOVED","last_alarm_date":"2022-05-24","alarm_counter":1,"software_version":"010107","message_datetime":"2022-05-24 07:00","duration_removed_h":0.016667,"last_remove_date":"2022-05-24","removed_counter":1,"test_button_last_date":"2022-05-24","test_button_counter":2,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_2","dust_level_deprecated_by": "dust_level_counter, update before 2026-12-01","dust_level_counter":2,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'Smokey4;01097274;TAMPER_WHILE_REMOVED;2022-05-24;1;1111-11-11 11:11.11'
         }
         test {
             comment  = 'Synthetic telegram: dust level 27, no cleaning recommendation yet.'
             args     = 'Smokey5 ei6500 01097274 NOKEY'
             telegram = 58442515747209010C1A7A8B0000000BFD0F070101046D2A06D82502FD17000082206CD825426CD0238440FF2C1b0F11008250FD61000082506C01018260FD6100008360FD3100000082606C01018270FD61000082706C0101
-            json     = '{"_":"telegram","media":"smoke detector","meter":"ei6500","name":"Smokey5","id":"01097274","status":"OK","last_alarm_date":"2000-01-01","alarm_counter":0,"software_version":"010107","message_datetime":"2022-05-24 06:42","duration_removed_h":0,"last_remove_date":"2000-01-01","removed_counter":0,"test_button_last_date":"2000-01-01","test_button_counter":0,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_1B","dust_level_counter":27,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"smoke detector","driver":"ei6500","name":"Smokey5","id":"01097274","status":"OK","last_alarm_date":"2000-01-01","alarm_counter":0,"software_version":"010107","message_datetime":"2022-05-24 06:42","duration_removed_h":0,"last_remove_date":"2000-01-01","removed_counter":0,"test_button_last_date":"2000-01-01","test_button_counter":0,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_1B","dust_level_deprecated_by": "dust_level_counter, update before 2026-12-01","dust_level_counter":27,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'Smokey5;01097274;OK;2000-01-01;0;1111-11-11 11:11.11'
         }
         test {
             comment  = 'Synthetic telegram: dust level 28, cleaning is recommended.'
             args     = 'Smokey6 ei6500 01097274 NOKEY'
             telegram = 58442515747209010C1A7A8B0000000BFD0F070101046D2A06D82502FD17000082206CD825426CD0238440FF2C1c0F11008250FD61000082506C01018260FD6100008360FD3100000082606C01018270FD61000082706C0101
-            json     = '{"_":"telegram","media":"smoke detector","meter":"ei6500","name":"Smokey6","id":"01097274","status":"CLEANING_RECOMMENDED","last_alarm_date":"2000-01-01","alarm_counter":0,"software_version":"010107","message_datetime":"2022-05-24 06:42","duration_removed_h":0,"last_remove_date":"2000-01-01","removed_counter":0,"test_button_last_date":"2000-01-01","test_button_counter":0,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_1C","dust_level_counter":28,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"smoke detector","driver":"ei6500","name":"Smokey6","id":"01097274","status":"CLEANING_RECOMMENDED","last_alarm_date":"2000-01-01","alarm_counter":0,"software_version":"010107","message_datetime":"2022-05-24 06:42","duration_removed_h":0,"last_remove_date":"2000-01-01","removed_counter":0,"test_button_last_date":"2000-01-01","test_button_counter":0,"installation_date":"2022-05-24","last_sound_check_date":"2022-03-16","dust_level": "DUST_1C","dust_level_deprecated_by": "dust_level_counter, update before 2026-12-01","dust_level_counter":28,"battery_level":"3.00V","obstacle_distance":"","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'Smokey6;01097274;CLEANING_RECOMMENDED;2000-01-01;0;1111-11-11 11:11.11'
         }
     }

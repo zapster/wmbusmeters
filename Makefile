@@ -81,7 +81,7 @@ else
 endif
 
 ifeq "$(COLLECT)" "true"
-    COLLECT_FLAGS=-DCOLLECT
+    COLLECT_FLAGS=-DCOLLECT_FILE=\"$(CURDIR)/$(BUILD)/difvifexamples\"
 else
     COLLECT_FLAGS=
 endif
@@ -142,7 +142,7 @@ endif
 $(info Building $(VERSION))
 
 FUZZFLAGS ?= -DFUZZING=false
-CXXFLAGS ?= $(EXTRA_CXXFLAGS) $(DEBUG_FLAGS) $(FUZZFLAGS) -fPIC -std=c++17 -Wall -Werror=format-security -Wno-unused-function
+CXXFLAGS ?= $(EXTRA_CXXFLAGS) $(DEBUG_FLAGS) $(FUZZFLAGS) -fPIC -Wall -Werror=format-security -Wno-unused-function
 
 # Inject default paths
 CXXFLAGS +=\
@@ -187,6 +187,7 @@ PROG_OBJS:=\
 	$(BUILD)/cmdline.o \
 	$(BUILD)/config.o \
 	$(BUILD)/crc16.o \
+	$(BUILD)/doc.o \
 	$(BUILD)/download.o \
 	$(BUILD)/drivers.o \
 	$(BUILD)/dvparser.o \
@@ -195,6 +196,7 @@ PROG_OBJS:=\
 	$(BUILD)/mbus_rawtty.o \
 	$(BUILD)/metermanager.o \
 	$(BUILD)/meters.o \
+	$(BUILD)/generated_library.o \
 	$(BUILD)/manufacturer_specificities.o \
 	$(BUILD)/printer.o \
 	$(BUILD)/rtlsdr.o \
@@ -223,7 +225,8 @@ PROG_OBJS:=\
 	$(BUILD)/link_mode.o \
 	$(BUILD)/signal_handling.o \
 	$(BUILD)/slip.o \
-	$(BUILD)/fs.o
+	$(BUILD)/fs.o \
+	$(BUILD)/command_handler.o
 
 # If you run: "make DRIVER=minomess" then only driver_minomess.cc will be compiled into wmbusmeters.
 
@@ -269,14 +272,16 @@ deb_local:
 # Check docs verifies that all options in the source have been mentioned in the README and in the man page.
 # Also any option not in the source but mentioned in the docs is warned for as well.
 check_docs:
-	@rm -f /tmp/options_in_*
-	@cat src/cmdline.cc  | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > /tmp/options_in_code
-	@cat wmbusmeters.1   | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > /tmp/options_in_man
-	@cat README.md | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > /tmp/options_in_readme
-	@$(BUILD)/wmbusmeters --help | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > /tmp/options_in_binary
-	@diff /tmp/options_in_code /tmp/options_in_man || echo CODE_VS_MAN
-	@diff /tmp/options_in_code /tmp/options_in_readme || echo CODE_VS_README
-	@diff /tmp/options_in_code /tmp/options_in_binary || echo CODE_VS_BINARY
+	@rm -rf $(BUILD)/check_docs
+	@mkdir -p $(BUILD)/check_docs
+	@cat src/cmdline.cc  | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > $(BUILD)/check_docs/options_in_code
+	@cat wmbusmeters.1   | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > $(BUILD)/check_docs/options_in_man
+	@cat README.md | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > $(BUILD)/check_docs/options_in_readme
+	@$(BUILD)/wmbusmeters --help | grep -o -- '--[a-z][a-z]*' | sort | uniq | grep -v internaltesting > $(BUILD)/check_docs/options_in_binary
+	@diff $(BUILD)/check_docs/options_in_code $(BUILD)/check_docs/options_in_man || echo CODE_VS_MAN
+	@diff $(BUILD)/check_docs/options_in_code $(BUILD)/check_docs/options_in_readme || echo CODE_VS_README
+	@diff $(BUILD)/check_docs/options_in_code $(BUILD)/check_docs/options_in_binary || echo CODE_VS_BINARY
+	@rm -rf $(BUILD)/check_docs
 	@echo "OK docs"
 
 install:

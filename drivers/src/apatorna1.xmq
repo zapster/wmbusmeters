@@ -7,6 +7,76 @@ driver {
     detect {
         mvt = APA,14,07
     }
+    flags {
+        flag {
+            name = SUMMER_TIME
+            info = 'The meter clock is in summer time (daylight saving time).'
+        }
+        flag {
+            name = HISTORICAL_INDICATION
+            info = 'The telegram carries a historical indication.'
+        }
+        flag {
+            name = MAX_SPEED_EXCEEDED
+            info = 'The pointer of the meter turns faster than the speed up to which correct counting is guaranteed.'
+        }
+        flag {
+            name = DEVICE_ACCESS_ERROR
+            info = 'More than 30 failed radio communication attempts with the module, e.g. a wrong encryption key or a wrongly addressed or malformed message.'
+        }
+        flag {
+            name = TWO_WAY_COM_BLOCK
+            info = 'Two-way radio communication is blocked for a while, the module has used up its message credits (battery protection).'
+        }
+        flag {
+            name = INSTALL_FRAME
+            info = 'The telegram is an installation frame.'
+        }
+        flag {
+            name = WRONG_TEMPERATURE
+            info = 'The temperature of the module is below -15 degrees C or above 60 degrees C.'
+        }
+        flag {
+            name = SERVICE_EVENT
+            info = 'A service event has occurred.'
+        }
+        flag {
+            name = MINIMUM_FLOW
+            info = 'The flow is below the configured minimum flow for longer than the configured time.'
+        }
+        flag {
+            name = MAXIMUM_FLOW
+            info = 'The flow is above the configured maximum flow for longer than the configured time.'
+        }
+        flag {
+            name = REVERSE_FLOW
+            info = 'Reverse flow above the configured reverse volume threshold has been detected.'
+        }
+        flag {
+            name = MEASUREMENT_UNCHANGED
+            info = 'No flow, or only very small volume increments, for longer than the configured time.'
+        }
+        flag {
+            name = LEAK
+            info = 'Continuous flow for longer than the configured time, which indicates a leak.'
+        }
+        flag {
+            name = DEVICE_DISCONNECTED
+            info = 'The radio module has been removed from the water meter. After mounting it again the event must be cleared and the meter reading stored again.'
+        }
+        flag {
+            name = MAGNETIC_FIELD
+            info = 'A strong external magnetic field has been detected.'
+        }
+        flag {
+            name = BATTERY_LOW
+            info = 'The battery voltage is too low.'
+        }
+        flag {
+            name = BATTERY_LIFETIME_THRESHOLD_EXCEEDED
+            info = 'The battery charge is below the configured threshold.'
+        }
+    }
     fields {
         field {
             name           = packed_total_raw
@@ -151,6 +221,7 @@ driver {
             name      = total
             quantity  = Volume
             info      = 'The total water consumption recorded by this meter.'
+            change    = Increasing
             calculate = '((((packed_total_raw_counter >> 8counter) * 16counter) + (packed_total_raw_counter % 16counter)) * packed_total_multiplier_counter / 1000counter) * 1m3'
         }
         field {
@@ -167,7 +238,8 @@ driver {
         field {
             name         = historic_age
             quantity     = Time
-            info         = 'Age of the last historical reading carried in the telegram.'
+            info         = 'Age of the last historical reading carried in the telegram. Reset every month.'
+            change       = Sample
             display_unit = h
             calculate    = '((((historic_age_meta_raw_counter >> 2counter) * 256counter) + historic_age_low_raw_counter) * 1h)'
         }
@@ -175,6 +247,7 @@ driver {
             name      = historic
             quantity  = Volume
             info      = 'The last historical water consumption recorded by this meter.'
+            change    = Increasing
             calculate = 'total_m3 - (((((historic_delta_b2_raw_counter << 18counter) +
                          (historic_delta_b1_raw_counter << 10counter) +
                          (historic_delta_b0_raw_counter << 2counter) +
@@ -189,8 +262,8 @@ driver {
         }
         field {
             name     = frame_status
-            quantity = Text
-            info     = 'Status flags stored in the unencrypted manufacturer payload byte.'
+            quantity = Flags
+            info     = 'Status flags from the unencrypted manufacturer payload byte: events (pointer speed, radio access error, two-way communication block, module temperature) and frame information (summer time, historical indication, installation frame, service event).'
             match {
                 difvifkey = 01FB10
             }
@@ -243,7 +316,7 @@ driver {
         }
         field {
             name     = current_status
-            quantity = Text
+            quantity = Flags
             info     = 'Current alarm and tamper flags from the decrypted payload.'
             match {
                 difvifkey = 01FB11
@@ -297,8 +370,8 @@ driver {
         }
         field {
             name     = historic_status
-            quantity = Text
-            info     = 'Historic alarm and tamper flags from the decrypted payload.'
+            quantity = Flags
+            info     = 'Stored alarm and tamper flags from the decrypted payload. According to the APT-WMBUS-NA-1 documentation every event has a current and a stored flag, the stored flag stays set after the event has ended until the flags are cleared.'
             match {
                 difvifkey = 01FB12
             }
@@ -413,70 +486,70 @@ driver {
         test {
             args     = 'ApNa1 apatorna1 04913581 00000000000000000000000000000000'
             telegram = 1C440106813591041407A0B000266A705474DDB80D9A0EB9AE2EF29D96
-            json     = '{"_":"telegram","media":"water","meter":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":300.619,"historic_datetime":"2024-02-29 22:22","historic_age_h":545,"meter_datetime":"2024-03-23 15:22","total_m3":345.312,"current_status":"OK","frame_status":"OK","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"water","driver":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":300.619,"historic_datetime":"2024-02-29 22:22","historic_age_h":545,"meter_datetime":"2024-03-23 15:22","total_m3":345.312,"current_status":"OK","frame_status":"OK","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'ApNa1;04913581;345.312;1111-11-11 11:11.11'
         }
         test {
             comment  = 'Issue 1215 cluster 1 before dip'
             args     = 'ApNa1 apatorna1 04913581 00000000000000000000000000000000'
             telegram = 1C440106813591041407A07F018D43B54E718E8718D5D2C8F939194847
-            json     = '{"_":"telegram","media":"water","meter":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:23","historic_age_h":351,"meter_datetime":"2024-10-15 12:23","total_m3":687.361,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"OK","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"water","driver":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:23","historic_age_h":351,"meter_datetime":"2024-10-15 12:23","total_m3":687.361,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"OK","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'ApNa1;04913581;687.361;1111-11-11 11:11.11'
         }
         test {
             comment  = 'Issue 1215 cluster 1 dip'
             args     = 'ApNa1 apatorna1 04913581 00000000000000000000000000000000'
             telegram = 1C440106813591041407A17D01416562108AB98A0FE92FC06AA8122176
-            json     = '{"_":"telegram","media":"water","meter":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:22","historic_age_h":351,"meter_datetime":"2024-10-15 12:22","total_m3":687.104,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"OK","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"water","driver":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:22","historic_age_h":351,"meter_datetime":"2024-10-15 12:22","total_m3":687.104,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"OK","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'ApNa1;04913581;687.104;1111-11-11 11:11.11'
         }
         test {
             comment  = 'Issue 1215 cluster 1 recovery'
             args     = 'ApNa1 apatorna1 04913581 00000000000000000000000000000000'
             telegram = 1C440106813591041407A174013655E9B2B8085E2F256908D7498C402C
-            json     = '{"_":"telegram","media":"water","meter":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:21","historic_age_h":351,"meter_datetime":"2024-10-15 12:21","total_m3":687.357,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"OK","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"water","driver":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:21","historic_age_h":351,"meter_datetime":"2024-10-15 12:21","total_m3":687.357,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"OK","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'ApNa1;04913581;687.357;1111-11-11 11:11.11'
         }
         test {
             comment  = 'Issue 1215 cluster 2 before dip'
             args     = 'ApNa1 apatorna1 04913581 00000000000000000000000000000000'
             telegram = 1C440106813591041407A0FF019E3790584B0876226B94ADC34FFABDED
-            json     = '{"_":"telegram","media":"water","meter":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:04","historic_age_h":375,"meter_datetime":"2024-10-16 12:04","total_m3":689.403,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"water","driver":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:04","historic_age_h":375,"meter_datetime":"2024-10-16 12:04","total_m3":689.403,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'ApNa1;04913581;689.403;1111-11-11 11:11.11'
         }
         test {
             comment  = 'Issue 1215 cluster 2 dip'
             args     = 'ApNa1 apatorna1 04913581 00000000000000000000000000000000'
             telegram = 1C440106813591041407A0020134813C00486734067DB0111C30188137
-            json     = '{"_":"telegram","media":"water","meter":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:04","historic_age_h":375,"meter_datetime":"2024-10-16 12:04","total_m3":689.152,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"water","driver":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:04","historic_age_h":375,"meter_datetime":"2024-10-16 12:04","total_m3":689.152,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'ApNa1;04913581;689.152;1111-11-11 11:11.11'
         }
         test {
             comment  = 'Issue 1215 cluster 2 recovery'
             args     = 'ApNa1 apatorna1 04913581 00000000000000000000000000000000'
             telegram = 1C440106813591041407A00C019334727003B3DA268CF11117D85B6D71
-            json     = '{"_":"telegram","media":"water","meter":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:06","historic_age_h":375,"meter_datetime":"2024-10-16 12:06","total_m3":689.415,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"water","driver":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:06","historic_age_h":375,"meter_datetime":"2024-10-16 12:06","total_m3":689.415,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'ApNa1;04913581;689.415;1111-11-11 11:11.11'
         }
         test {
             comment  = 'Issue 1215 cluster 3 before dip'
             args     = 'ApNa1 apatorna1 04913581 00000000000000000000000000000000'
             telegram = 1C440106813591041407A0080174159B7E36D8E6421E3AED55C76BA54A
-            json     = '{"_":"telegram","media":"water","meter":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:18","historic_age_h":473,"meter_datetime":"2024-10-20 14:18","total_m3":696.575,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"water","driver":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:18","historic_age_h":473,"meter_datetime":"2024-10-20 14:18","total_m3":696.575,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'ApNa1;04913581;696.575;1111-11-11 11:11.11'
         }
         test {
             comment  = 'Issue 1215 cluster 3 dip'
             args     = 'ApNa1 apatorna1 04913581 00000000000000000000000000000000'
             telegram = 1C440106813591041407A10C010AEF3C1D41BE7F7A33B9EB469924397C
-            json     = '{"_":"telegram","media":"water","meter":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:18","historic_age_h":473,"meter_datetime":"2024-10-20 14:18","total_m3":696.32,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"water","driver":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:18","historic_age_h":473,"meter_datetime":"2024-10-20 14:18","total_m3":696.32,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'ApNa1;04913581;696.32;1111-11-11 11:11.11'
         }
         test {
             comment  = 'Issue 1215 cluster 3 recovery'
             args     = 'ApNa1 apatorna1 04913581 00000000000000000000000000000000'
             telegram = 1C440106813591041407A0130197DAF2A1C02F9B77B14ACD51CB20C41E
-            json     = '{"_":"telegram","media":"water","meter":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:20","historic_age_h":473,"meter_datetime":"2024-10-20 14:20","total_m3":696.576,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
+            json     = '{"_":"telegram","media":"water","driver":"apatorna1","name":"ApNa1","id":"04913581","historic_m3":662.325,"historic_datetime":"2024-09-30 21:20","historic_age_h":473,"meter_datetime":"2024-10-20 14:20","total_m3":696.576,"current_status":"OK","frame_status":"SUMMER_TIME","historic_status":"MINIMUM_FLOW","timestamp":"1111-11-11T11:11:11Z"}'
             fields   = 'ApNa1;04913581;696.576;1111-11-11 11:11.11'
         }
     }

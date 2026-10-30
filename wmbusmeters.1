@@ -61,7 +61,7 @@ Add :verbose to any analyze to get more verbose analyze output.
 
 \fB\--license\fR print GPLv3+ license
 
-\fB\--listento=\fR<mode> listen to one of the c1,t1,s1,s1m,n1a-n1f link modes
+\fB\--listento=\fR<mode> listen to one of the c1,t1,s1,s1m,n1a-n1f link modes, or cct for iU891A Custom C/T mode
 
 \fB\--listento=\fR<mode>,<mode> listen to more than one link mode at the same time, assuming the dongle supports it
 
@@ -102,6 +102,8 @@ Add :verbose to any analyze to get more verbose analyze output.
 \fB\--pollinterval=\fR<interval> poll mbus meters every <interval>, default is 10m.
 
 \fB\--ppjson\fR pretty print the json output
+
+\fB\--rawshell=\fR<cmdline> invokes cmdline for every received telegram, also from unconfigured meters, with env variables TELEGRAM_ID, TELEGRAM_HEX (as received, not decrypted), TELEGRAM_DEVICE and TELEGRAM_RSSI_DBM
 
 \fB\--resetafter=\fR<time> reset the wmbus dongle regularly, default is 23h
 

@@ -172,8 +172,8 @@ int main(int argc, char **argv)
 
 shared_ptr<Printer> create_printer(Configuration *config)
 {
-    return shared_ptr<Printer>(new Printer(config->json,
-                                           config->pretty_print_json,
+    return shared_ptr<Printer>(new Printer(config->output_format,
+                                           config->pretty_print_output,
                                            config->fields,
                                            config->separator, config->meterfiles, config->meterfiles_dir,
                                            config->use_logfile, config->logfile,
@@ -219,7 +219,7 @@ void list_shell_envs(Configuration *config, string meter_driver)
         if (fi.vname() == "") continue;
         string name = fi.vname();
         std::transform(name.begin(), name.end(), name.begin(), ::toupper);
-        if (fi.xuantity() != Quantity::Text)
+        if (!nonNumericQuantity(fi.xuantity()))
         {
             printf("METER_%s_%s\n",name.c_str(), unitToStringUpperCase(fi.displayUnit()).c_str());
         }
@@ -257,7 +257,7 @@ void list_fields(Configuration *config, string meter_driver)
         if (fi.printProperties().hasHIDE()) continue;
 
         string name = fi.vname();
-        if (fi.xuantity() != Quantity::Text)
+        if (!nonNumericQuantity(fi.xuantity()))
         {
             Unit u = defaultUnitForQuantity(fi.xuantity());
             Unit du = fi.displayUnit();
@@ -294,7 +294,7 @@ void list_fields(Configuration *config, string meter_driver)
 
         if (fi.vname() == "") continue;
         string name = fi.vname();
-        if (fi.xuantity() != Quantity::Text)
+        if (!nonNumericQuantity(fi.xuantity()))
         {
             Unit u = defaultUnitForQuantity(fi.xuantity());
             Unit du = fi.displayUnit();
@@ -586,11 +586,13 @@ bool start(Configuration *config)
     stderrEnabled(config->use_stderr_for_log);
     setAlarmShells(config->alarm_shells);
     setIgnoreDuplicateTelegrams(config->ignore_duplicate_telegrams);
-    setDetailedFirst(config->detailed_first);
+    setAddTelegramHex(config->add_telegram_hex);
+    setAddTelegramStructured(config->add_telegram_structured);
+    setTelegramDetails(config->telegram_details);
     if (config->new_meter_shells.size() > 0)
     {
         // We have metershells, force detailed first telegram.
-        setDetailedFirst(true);
+        setTelegramDetails(TelegramDetails::FIRST);
     }
     log_start_information(config);
 
@@ -694,6 +696,33 @@ bool start(Configuration *config)
                     return true;
                 });
         }
+    }
+
+    if (config->raw_shells.size() > 0)
+    {
+        // Invoke the rawshells for every received telegram, also for telegrams
+        // from meters that are not configured or that cannot be decrypted.
+        vector<string> raw_shells = config->raw_shells;
+        meter_manager_->onTelegram([raw_shells](AboutTelegram &about, vector<uchar> frame) {
+                // Grab the hex before parsing the header, the frame is passed by reference.
+                string hex = bin2hex(frame);
+                Telegram t;
+                t.about = about;
+                t.parseHeader(frame);
+                vector<string> envs;
+                envs.push_back("TELEGRAM_HEX="+hex);
+                envs.push_back("TELEGRAM_ID="+bin2hex(t.dll_id));
+                envs.push_back("TELEGRAM_DEVICE="+about.device);
+                envs.push_back("TELEGRAM_RSSI_DBM="+to_string(about.rssi_dbm));
+                for (auto &s : raw_shells)
+                {
+                    vector<string> args;
+                    args.push_back("-c");
+                    args.push_back(s);
+                    invokeShell("/bin/sh", args, envs);
+                }
+                return true;
+            });
     }
 
     bus_manager_->runAnySimulations();

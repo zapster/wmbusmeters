@@ -1,0 +1,188 @@
+// Copyright (C) 2026 Magnus Friskytt (gpl-3.0-or-later)
+driver {
+    name           = ebeco500
+    meter_type     = ElectricityMeter
+    info           = 'Underfloor Heating Thermostat'
+    default_fields = name,id,status,total_kwh,external_temperature_c,on_time_h,timestamp
+    manufacturer   = Ebeco
+    detect {
+        mvt = EBE,01,02
+    }
+    library {
+        use = external_temperature_c
+        use = total_kwh
+        use = on_time_h
+        use = meter_datetime
+    }
+    flags {
+        flag {
+            name = TEMPORARY
+            info = 'Temporary operating status; exact meaning not documented.'
+        }
+        flag {
+            name = MIN_LIMIT
+            info = 'Minimum temperature limit is active.'
+        }
+        flag {
+            name = MAX_LIMIT
+            info = 'Maximum temperature limit is active.'
+        }
+        flag {
+            name = OPEN_WINDOW
+            info = 'Open-window detection is active; heating is suspended for 15 minutes after a rapid temperature drop.'
+        }
+        flag {
+            name = ROOM_OC
+            info = 'Room temperature sensor open circuit (E2).'
+        }
+        flag {
+            name = ROOM_SC
+            info = 'Room temperature sensor short circuit (E1).'
+        }
+        flag {
+            name = FLOOR_OC
+            info = 'Floor temperature sensor open circuit (E4).'
+        }
+        flag {
+            name = FLOOR_SC
+            info = 'Floor temperature sensor short circuit (E3).'
+        }
+        flag {
+            name = RELAY_OC
+            info = 'Possible relay open-circuit fault; not confirmed by manufacturer documentation.'
+        }
+        flag {
+            name = RELAY_SC
+            info = 'Possible relay short-circuit fault; not confirmed by manufacturer documentation.'
+        }
+        flag {
+            name = RELAY_OT
+            info = 'Possible relay overtemperature condition; not confirmed by manufacturer documentation.'
+        }
+        flag {
+            name = SYSTEM
+            info = 'Internal system fault; exact fault category not documented.'
+        }
+        flag {
+            name = STARTUP
+            info = 'Thermostat startup or initialization status.'
+        }
+        flag {
+            name = POWER_CTRL
+            info = 'Power-control operating mode; thermostat supports percentage-based control in 20-minute cycles.'
+        }
+        flag {
+            name = POWER_OFF
+            info = 'Power-off status; whether this refers to the thermostat or heating output is not documented.'
+        }
+        flag {
+            name = RELAY_TEST
+            info = 'Relay test status; exact behavior not documented.'
+        }
+    }
+    fields {
+        field {
+            name       = status
+            quantity   = Flags
+            info       = 'Thermostat error and status flags.'
+            attributes = STATUS,INCLUDE_TPL_STATUS
+            match {
+                difvifkey = 02FB17
+            }
+            lookup {
+                name            = ERROR_FLAGS
+                map_type        = BitToString
+                mask_bits       = 0xffff
+                default_message = OK
+                map {
+                    bit  = 0
+                    name = TEMPORARY
+                    test = Set
+                }
+                map {
+                    bit  = 1
+                    name = MIN_LIMIT
+                    test = Set
+                }
+                map {
+                    bit  = 2
+                    name = MAX_LIMIT
+                    test = Set
+                }
+                map {
+                    bit  = 3
+                    name = OPEN_WINDOW
+                    test = Set
+                }
+                map {
+                    bit  = 4
+                    name = ROOM_OC
+                    test = Set
+                }
+                map {
+                    bit  = 5
+                    name = ROOM_SC
+                    test = Set
+                }
+                map {
+                    bit  = 6
+                    name = FLOOR_OC
+                    test = Set
+                }
+                map {
+                    bit  = 7
+                    name = FLOOR_SC
+                    test = Set
+                }
+                map {
+                    bit  = 8
+                    name = RELAY_OC
+                    test = Set
+                }
+                map {
+                    bit  = 9
+                    name = RELAY_SC
+                    test = Set
+                }
+                map {
+                    bit  = 10
+                    name = RELAY_OT
+                    test = Set
+                }
+                map {
+                    bit  = 11
+                    name = SYSTEM
+                    test = Set
+                }
+                map {
+                    bit  = 12
+                    name = STARTUP
+                    test = Set
+                }
+                map {
+                    bit  = 13
+                    name = POWER_CTRL
+                    test = Set
+                }
+                map {
+                    bit  = 14
+                    name = POWER_OFF
+                    test = Set
+                }
+                map {
+                    bit  = 15
+                    name = RELAY_TEST
+                    test = Set
+                }
+            }
+        }
+    }
+    tests {
+        test {
+            args     = 'Golvvarme ebeco500 000001e3 FCC9B808216D9D1F5FF6E1A3CF7D3084'
+            telegram = 31444514e301000001028c20807a2e002025e25dea4f2bc8ec94920260443a95c2bf3856e3e380e889cc8233ca5d9771f289
+            json     = '{"_":"telegram","media":"electricity","driver":"ebeco500","name":"Golvvarme","id":"000001e3","on_time_h":105.633333,"external_temperature_c":22.8,"total_kwh":68.6,"meter_datetime":"2000-02-01 13:54:50","status":"OK","timestamp":"1111-11-11T11:11:11Z"}'
+            fields   = 'Golvvarme;000001e3;OK;68.6;22.8;105.633333;1111-11-11 11:11.11'
+        }
+    }
+}

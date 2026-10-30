@@ -25,20 +25,27 @@ struct DriverDynamic : public MeterCommonImplementation
     DriverDynamic(MeterInfo &mi, DriverInfo &di);
     ~DriverDynamic();
     static bool load(DriverInfo *di, const std::string &name, const char *content);
-    static XMQProceed add_detect(XMQDoc *doc, XMQNodePtr detect, DriverInfo *di);
-    static XMQProceed add_compact_frame_format(XMQDoc *doc, XMQNodePtr node, DriverInfo *di);
-    static XMQProceed add_use(XMQDoc *doc, XMQNodePtr field, DriverDynamic *dd);
-    static XMQProceed add_field(XMQDoc *doc, XMQNodePtr field, DriverDynamic *dd);
-    static XMQProceed add_match(XMQDoc *doc, XMQNodePtr match, DriverDynamic *dd);
-    static XMQProceed add_combinable(XMQDoc *doc, XMQNodePtr match, DriverDynamic *dd);
-    static XMQProceed add_combinable_raw(XMQDoc *doc, XMQNodePtr match, DriverDynamic *dd);
+    static XMQProceed add_detect(XMQDoc *doc, XMQNode *detect, DriverInfo *di);
+    static XMQProceed add_compact_frame_format(XMQDoc *doc, XMQNode *node, DriverInfo *di);
+    static XMQProceed add_use(XMQDoc *doc, XMQNode *field, DriverDynamic *dd);
+    static XMQProceed add_field(XMQDoc *doc, XMQNode *field, DriverDynamic *dd);
+    static XMQProceed add_match(XMQDoc *doc, XMQNode *match, DriverDynamic *dd);
+    static XMQProceed add_combinable(XMQDoc *doc, XMQNode *match, DriverDynamic *dd);
+    static XMQProceed add_combinable_raw(XMQDoc *doc, XMQNode *match, DriverDynamic *dd);
 
-    static XMQProceed add_lookup(XMQDoc *doc, XMQNodePtr lookup, DriverDynamic *dd);
-    static XMQProceed add_map(XMQDoc *doc, XMQNodePtr map, DriverDynamic *dd);
-    
-    static XMQProceed add_mfct_tpl_status(XMQDoc *doc, XMQNodePtr node, DriverInfo *di);
-    static XMQProceed add_mfct_tpl_status_map(XMQDoc *doc, XMQNodePtr map, Translate::Rule *rule);
-    static XMQProceed add_default_key(XMQDoc *doc, XMQNodePtr node, DriverInfo *di);
+    static XMQProceed add_lookup(XMQDoc *doc, XMQNode *lookup, DriverDynamic *dd);
+    static XMQProceed add_map(XMQDoc *doc, XMQNode *map, DriverDynamic *dd);
+    // Like add_map, but skips the entry if tmp_rule_ already has a map{} for the same bit/value,
+    // used to inherit a template's map{} entries without overriding the field's own.
+    static XMQProceed add_inherited_map(XMQDoc *doc, XMQNode *map, DriverDynamic *dd);
+
+    // Reusable field templates, see driver/templates/template_field.
+    static XMQProceed add_template_field(XMQDoc *doc, XMQNode *template_field, DriverDynamic *dd);
+
+    static XMQProceed add_mfct_tpl_status(XMQDoc *doc, XMQNode *node, DriverInfo *di);
+    static XMQProceed add_mfct_tpl_status_map(XMQDoc *doc, XMQNode *map, Translate::Rule *rule);
+    static XMQProceed add_default_key(XMQDoc *doc, XMQNode *node, DriverInfo *di);
+    static XMQProceed add_flag(XMQDoc *doc, XMQNode *node, DriverInfo *di);
 
     const std::string &fileName() { return file_name_; }
 
@@ -48,6 +55,13 @@ private:
     FieldMatcher *tmp_matcher_;
     Translate::Lookup *tmp_lookup_;
     Translate::Rule *tmp_rule_;
+    bool flags_found_ {};
+    // Named field templates (driver/templates/template_field), keyed by their name.
+    std::map<std::string, XMQNode*> templates_;
+    // While parsing a field's lookup{}, the corresponding template's lookup{} node to
+    // fall back to for any property (or map{} entries) the field itself did not declare.
+    // NULL when the field does not use a template.
+    XMQNode *tmp_template_lookup_;
 };
 
 #endif

@@ -1,5 +1,7 @@
 #!/bin/sh
 
+. tests/include.sh
+
 PROG="$1"
 
 mkdir -p testoutput
@@ -11,7 +13,7 @@ TESTNAME="Test duplicates are ignored"
 TESTRESULT="ERROR"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"smoke detector","meter":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"smoke detector","driver":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -26,7 +28,7 @@ then
     diff $TEST/test_expected.txt $TEST/test_responses.txt
     if [ "$?" = "0" ]
     then
-        echo "OK: $TESTNAME"
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
         if [ "$USE_MELD" = "true" ]
@@ -36,18 +38,18 @@ then
     fi
 fi
 
-if [ "$TESTRESULT" = "ERROR" ]; then echo ERROR: $TESTNAME;  exit 1; fi
+if [ "$TESTRESULT" = "ERROR" ]; then printERROR "$TESTNAME";  exit 1; fi
 
 ####################################################
 TESTNAME="Test duplicates are left alone"
 TESTRESULT="ERROR"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"smoke detector","meter":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
-{"_":"telegram","media":"smoke detector","meter":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
-{"_":"telegram","media":"smoke detector","meter":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
-{"_":"telegram","media":"smoke detector","meter":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
-{"_":"telegram","media":"smoke detector","meter":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"smoke detector","driver":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"smoke detector","driver":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"smoke detector","driver":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"smoke detector","driver":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"smoke detector","driver":"lansensm","name":"Rummet","id":"01000273","status":"OK","async_msg_id_counter":588,"minutes_since_last_manual_test_counter":30022,"timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys .  $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -62,7 +64,7 @@ then
     diff $TEST/test_expected.txt $TEST/test_responses.txt
     if [ "$?" = "0" ]
     then
-        echo "OK: $TESTNAME"
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
         if [ "$USE_MELD" = "true" ]
@@ -72,4 +74,4 @@ then
     fi
 fi
 
-if [ "$TESTRESULT" = "ERROR" ]; then echo ERROR: $TESTNAME;  exit 1; fi
+if [ "$TESTRESULT" = "ERROR" ]; then printERROR "$TESTNAME";  exit 1; fi

@@ -89,6 +89,11 @@ enum class OutputFormat
     NONE, PLAIN, TERMINAL, JSON, HTML
 };
 
+enum class TelegramDetails
+{
+    NEVER, FIRST, ALWAYS
+};
+
 bool usesTTY(BusDeviceType t);
 bool usesRTLSDR(BusDeviceType t);
 const char *toString(BusDeviceType t);
@@ -96,8 +101,12 @@ const char *toLowerCaseString(BusDeviceType t);
 BusDeviceType toBusDeviceType(std::string &t);
 
 void setIgnoreDuplicateTelegrams(bool idt);
-void setDetailedFirst(bool df);
-bool getDetailedFirst();
+void setTelegramDetails(TelegramDetails td);
+TelegramDetails getTelegramDetails();
+void setAddTelegramHex(bool b);
+bool getAddTelegramHex();
+void setAddTelegramStructured(bool b);
+bool getAddTelegramStructured();
 
 // A specified bus device is supplied on the command line or in the config file.
 // It has this format "alias=file:type[id](extras):fq:bps:linkmods:CMD(command)"
@@ -220,6 +229,24 @@ int toInt(TPLSecurityMode tsm);
 TPLSecurityMode fromIntToTPLSecurityMode(int i);
 const char *toString(TPLSecurityMode tsm);
 
+// TPL status byte, standard-defined bits 0-4 (bits 5-7 are mfct specific).
+// name, mask, value: bit(s) are set when (sts & mask) == value.
+#define LIST_OF_TPL_STATUS_BITS \
+    X(BUSY,             0x03, 0x01) /* meter busy, cannot respond */ \
+    X(ERROR,            0x03, 0x02) /* meter failed to understand a message sent to it, details via error reporting, EN13757-3:2018 §10 */ \
+    X(ALARM,            0x03, 0x03) /* an abnormal condition, e.g. water is continuously running */ \
+    X(POWER_LOW,        0x04, 0x04) \
+    X(PERMANENT_ERROR,  0x08, 0x08) \
+    X(TEMPORARY_ERROR,  0x10, 0x10)
+
+enum class TPLStatusBit {
+#define X(name,mask,value) name,
+LIST_OF_TPL_STATUS_BITS
+#undef X
+};
+
+const char *toString(TPLStatusBit b);
+
 #define LIST_OF_AFL_AUTH_TYPES \
     X(NoAuth, 0, 0)             \
     X(Reserved1, 1, 0)          \
@@ -247,7 +274,7 @@ struct MeterKeys
     std::vector<uchar> confidentiality_key;
     std::vector<uchar> authentication_key;
     std::vector<std::vector<uchar>> default_keys; // Driver-level fallback keys tried when no meter key is configured.
-    
+
     bool hasConfidentialityKey() { return confidentiality_key.size() > 0; }
     bool hasAuthenticationKey() { return authentication_key.size() > 0; }
 };
@@ -412,6 +439,11 @@ public:
     int tpl_num_encr_blocks {};
     int tpl_cfg_ext {}; // 1 byte
     int tpl_kdf_selection {}; // 1 byte
+    uchar tpl_counter_b[4] {}; // Message counter found in the security mode 10 cfg extension field. Used by the kdf.
+    bool tpl_counter_found {}; // If set to true, then tpl_counter_b contains valid values.
+    int tpl_ccm_tag_size {}; // Size of the security mode 10 authentication tag, located in the tpl trailer.
+    std::vector<uchar> tpl_aad; // The tpl header bytes (ci..cfg ext) authenticated by the security mode 10 tag.
+    bool tpl_ccm_tag_ok {}; // Set to true if the security mode 10 authentication tag matched the computed tag.
     std::vector<uchar> tpl_generated_key; // 16 bytes
     std::vector<uchar> tpl_generated_mac_key; // 16 bytes
 
@@ -434,6 +466,7 @@ public:
     int mfct_0f_index = -1; // -1 if not found, else index of the 0f byte, if found, inside the difvif data after the header.
     int mfct_1f_index = -1; // -1 if not found, else index of the 1f byte, if found, then there are more records in the next telegram.
     int force_mfct_index = -1; // Force all data after this offset to be mfct specific. Used for meters not using 0f.
+    bool permit_sanxing_609b_bug = false; // Set by the driver's transform_payload=buggy_sanxing_609B when this meter is used.
     void extractFrame(std::vector<uchar> *fr); // Extract to full frame.
     void extractPayload(std::vector<uchar> *pl); // Extract frame data containing the measurements, after the header and not the suffix.
     void extractMfctData(std::vector<uchar> *pl); // Extract frame data after the DIF 0x0F.
@@ -757,5 +790,6 @@ const char *mbusCiField(uchar ci_field);
 
 int genericifyMedia(int media);
 bool isCloseEnough(int media1, int media2);
+
 
 #endif

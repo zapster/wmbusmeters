@@ -30,6 +30,7 @@
 #include"crypto/sha256.h"
 
 #include"utils/alarm.h"
+#include"utils/doc.h"
 #include"utils/fs.h"
 
 #include<assert.h>
@@ -1219,66 +1220,115 @@ bool Telegram::parseTPLConfig(std::vector<uchar>::iterator &pos)
 
         addExplanationAndIncrementPos(pos, 1, KindOfData::PROTOCOL, Understanding::FULL,
                                       "%02x tpl-cfg-ext (KDFS=%d)", tpl_cfg_ext, tpl_kdf_selection);
+    }
 
-        if (tpl_kdf_selection == 1)
+    if (tpl_sec_mode == TPLSecurityMode::AES_CCM) // Security mode 10, OMS security profile D
+    {
+        // The cfg field is followed by a 2 byte cfg extension field (CFE),
+        // an optional key version byte and a 4 byte message counter.
+        CHECK(2);
+        uchar cfe1 = *(pos+0);
+        uchar cfe2 = *(pos+1);
+        int cfe = cfe2 << 8 | cfe1;
+        int o = (cfe >> 8) & 0x03; // Authentication tag size: 0=4, 1=8, 2=12, 3=16 bytes.
+        int v = (cfe >> 6) & 0x01; // If set, then a key version byte follows the cfg extension field.
+        int d = (cfe >> 4) & 0x03; // Key derivation function selection.
+        int k = cfe & 0x0f; // Key id.
+        tpl_ccm_tag_size = 4 + o*4;
+        tpl_kdf_selection = d;
+
+        string cfe_info = "tag_size="+to_string(tpl_ccm_tag_size)+" kdf="+to_string(d)+" key_id="+to_string(k);
+        if (v) cfe_info += " key_version";
+        addExplanationAndIncrementPos(pos, 2, KindOfData::PROTOCOL, Understanding::FULL,
+                                      "%02x%02x tpl-cfg-ext (%s)", cfe1, cfe2, cfe_info.c_str());
+
+        if (v)
         {
-            vector<uchar> input;
-            vector<uchar> mac;
-            mac.resize(16);
-
-            // DC C ID 0x07 0x07 0x07 0x07 0x07 0x07 0x07
-            // Derivation Constant DC = 0x00 = encryption from meter.
-            //                          0x01 = mac from meter.
-            //                          0x10 = encryption from communication partner.
-            //                          0x11 = mac from communication partner.
-            input.insert(input.end(), 0x00); // DC 00 = generate ephemereal encryption key from meter.
-            // If there is a tpl_counter, then use it, else use afl_counter.
-            input.insert(input.end(), afl_counter_b, afl_counter_b+4);
-            // If there is a tpl_id, then use it, else use ddl_id.
-            if (tpl_id_found)
-            {
-                input.insert(input.end(), tpl_id_b, tpl_id_b+4);
-            }
-            else
-            {
-                input.insert(input.end(), dll_id_b, dll_id_b+4);
-            }
-
-            // Pad.
-            for (int i=0; i<7; ++i) input.insert(input.end(), 0x07);
-
-            debugPayload("(wmbus) input to kdf for enc", input);
-
-            if (meter_keys == NULL || meter_keys->confidentiality_key.size() != 16)
-            {
-                if (isSimulated())
-                {
-                    debug("(wmbus) simulation without keys, not generating Kmac and Kenc.\n");
-                    return true;
-                }
-                debug("(wmbus) no key, thus cannot execute kdf.\n");
-                return false;
-            }
-            AES_CMAC(safeButUnsafeVectorPtr(meter_keys->confidentiality_key),
-                     safeButUnsafeVectorPtr(input), 16,
-                     safeButUnsafeVectorPtr(mac));
-            string s = bin2hex(mac);
-            debug("(wmbus) ephemereal Kenc %s\n", s.c_str());
-            tpl_generated_key.clear();
-            tpl_generated_key.insert(tpl_generated_key.end(), mac.begin(), mac.end());
-
-            input[0] = 0x01; // DC 01 = generate ephemereal mac key from meter.
-            mac.clear();
-            mac.resize(16);
-            debugPayload("(wmbus) input to kdf for mac", input);
-            AES_CMAC(safeButUnsafeVectorPtr(meter_keys->confidentiality_key),
-                     safeButUnsafeVectorPtr(input), 16,
-                     safeButUnsafeVectorPtr(mac));
-            s = bin2hex(mac);
-            debug("(wmbus) ephemereal Kmac %s\n", s.c_str());
-            tpl_generated_mac_key.clear();
-            tpl_generated_mac_key.insert(tpl_generated_mac_key.end(), mac.begin(), mac.end());
+            CHECK(1);
+            uchar key_version = *(pos+0);
+            addExplanationAndIncrementPos(pos, 1, KindOfData::PROTOCOL, Understanding::FULL,
+                                          "%02x tpl-key-version", key_version);
         }
+
+        // The tpl header, from the ci field up to and including the cfg
+        // extension field(s), is used as additional authenticated data
+        // when verifying the aes-ccm tag. The message counter is not part
+        // of the aad, it enters the nonce instead.
+        tpl_aad = vector<uchar>(tpl_start, pos);
+
+        CHECK(4);
+        for (int i=0; i<4; ++i) tpl_counter_b[i] = *(pos+i);
+        tpl_counter_found = true;
+        addExplanationAndIncrementPos(pos, 4, KindOfData::PROTOCOL, Understanding::FULL,
+                                      "%02x%02x%02x%02x tpl-message-counter",
+                                      tpl_counter_b[0], tpl_counter_b[1], tpl_counter_b[2], tpl_counter_b[3]);
+    }
+
+    if (tpl_kdf_selection == 1)
+    {
+        vector<uchar> input;
+        vector<uchar> mac;
+        mac.resize(16);
+
+        // DC C ID 0x07 0x07 0x07 0x07 0x07 0x07 0x07
+        // Derivation Constant DC = 0x00 = encryption from meter.
+        //                          0x01 = mac from meter.
+        //                          0x10 = encryption from communication partner.
+        //                          0x11 = mac from communication partner.
+        input.insert(input.end(), 0x00); // DC 00 = generate ephemereal encryption key from meter.
+        // If there is a tpl_counter, then use it, else use afl_counter.
+        if (tpl_counter_found)
+        {
+            input.insert(input.end(), tpl_counter_b, tpl_counter_b+4);
+        }
+        else
+        {
+            input.insert(input.end(), afl_counter_b, afl_counter_b+4);
+        }
+        // If there is a tpl_id, then use it, else use ddl_id.
+        if (tpl_id_found)
+        {
+            input.insert(input.end(), tpl_id_b, tpl_id_b+4);
+        }
+        else
+        {
+            input.insert(input.end(), dll_id_b, dll_id_b+4);
+        }
+
+        // Pad.
+        for (int i=0; i<7; ++i) input.insert(input.end(), 0x07);
+
+        debugPayload("(wmbus) input to kdf for enc", input);
+
+        if (meter_keys == NULL || meter_keys->confidentiality_key.size() != 16)
+        {
+            if (isSimulated())
+            {
+                debug("(wmbus) simulation without keys, not generating Kmac and Kenc.\n");
+                return true;
+            }
+            debug("(wmbus) no key, thus cannot execute kdf.\n");
+            return false;
+        }
+        AES_CMAC(safeButUnsafeVectorPtr(meter_keys->confidentiality_key),
+                 safeButUnsafeVectorPtr(input), 16,
+                 safeButUnsafeVectorPtr(mac));
+        string s = bin2hex(mac);
+        debug("(wmbus) ephemereal Kenc %s\n", s.c_str());
+        tpl_generated_key.clear();
+        tpl_generated_key.insert(tpl_generated_key.end(), mac.begin(), mac.end());
+
+        input[0] = 0x01; // DC 01 = generate ephemereal mac key from meter.
+        mac.clear();
+        mac.resize(16);
+        debugPayload("(wmbus) input to kdf for mac", input);
+        AES_CMAC(safeButUnsafeVectorPtr(meter_keys->confidentiality_key),
+                 safeButUnsafeVectorPtr(input), 16,
+                 safeButUnsafeVectorPtr(mac));
+        s = bin2hex(mac);
+        debug("(wmbus) ephemereal Kmac %s\n", s.c_str());
+        tpl_generated_mac_key.clear();
+        tpl_generated_mac_key.insert(tpl_generated_mac_key.end(), mac.begin(), mac.end());
     }
 
     return true;
@@ -1493,12 +1543,39 @@ bool Telegram::potentiallyDecrypt(vector<uchar>::iterator &pos)
         CHECK(2);
         uchar a = *(pos+0);
         uchar b = *(pos+1);
+        bool decrypt_check_ok = (a == 0x2f && b == 0x2f);
 
-        addExplanationAndIncrementPos(pos, 2, KindOfData::PROTOCOL, Understanding::FULL,
-                                      "%02x%02x decrypt check bytes (%s)", *(pos+0), *(pos+1),
-                                      (*(pos+0) == 0x2f && *(pos+1) == 0x2f) ? "OK":"ERROR should be 2f2f");
+        if (!decrypt_check_ok && permit_sanxing_609b_bug)
+        {
+            // The buggy Sanxing S34U28 electricity meters do not put the OMS 2F2F verification bytes
+            // first: this device instead emits a fixed 0x609B marker here (observed identical
+            // across multiple captures with different access counters/IVs, so it is a fixed
+            // marker, not noise), and the normal DV record stream (starting with its usual
+            // date-and-time record) follows right after, same as any other amiplus-compatible
+            // meter. The 2F2F filler at the very end of the decrypted content (ordinary
+            // telegram-end padding, present on every meter in this family) is used instead to
+            // confirm the key was correct. Only meters using a driver with
+            // transform_payload=buggy_sanxing_609B (see setBuggySanxing609BDecode) permit this.
+            bool sanxing_609b_first = a == 0x60 && b == 0x9b;
+            bool sanxing_609b_last = distance(pos, frame.end()) >= 2 &&
+                *(frame.end()-2) == 0x2f && *(frame.end()-1) == 0x2f;
 
-        if ((a != 0x2f || b != 0x2f) && !FUZZING)
+            addExplanationAndIncrementPos(pos, 2, KindOfData::PROTOCOL, Understanding::FULL,
+                                          "%02x%02x decrypt check bytes (%s %s)", a, b,
+                                          sanxing_609b_first ? "Blech buggy sanxing 0x609b marker"
+                                          : "ERROR buggy sanxing expected 0x609b",
+                                          sanxing_609b_last  ? "but last two bytes are 0x2f2f, good"
+                                          : "ERROR buggy sanxing should have trailing 2f2f");
+            decrypt_check_ok = sanxing_609b_first && sanxing_609b_last;
+        }
+        else
+        {
+            addExplanationAndIncrementPos(pos, 2, KindOfData::PROTOCOL, Understanding::FULL,
+                                          "%02x%02x decrypt check bytes (%s)", a, b,
+                                          decrypt_check_ok ? "OK" : "ERROR should be 2f2f");
+        }
+
+        if (!decrypt_check_ok && !FUZZING)
         {
             // Wrong key supplied.
             int num_bytes = distance(pos, frame.end());
@@ -1623,6 +1700,56 @@ bool Telegram::potentiallyDecrypt(vector<uchar>::iterator &pos)
                 }
             }
             return false;
+        }
+    }
+    else if (tpl_sec_mode == TPLSecurityMode::AES_CCM)
+    {
+        // Security mode 10, OMS security profile D. AES-CCM with the ephemeral
+        // key derived in parseTPLConfig (DC=00, Kenc).
+
+        // The authentication tag is a suffix after the APL content. Its size is
+        // known from the cfg extension field even when no key is available.
+        suffix_size = tpl_ccm_tag_size;
+
+        if (tpl_generated_key.size() != 16)
+        {
+            // This can happen in simulations without any keys, or if the cfg
+            // extension field selected an unsupported key derivation function.
+            debug("(wmbus) security mode 10 telegram without a derived key, leaving telegram as is.\n");
+            return true;
+        }
+
+        int num_encrypted_bytes = 0;
+        int num_not_encrypted_at_end = 0;
+        bool ok = decrypt_TPL_AES_CCM(this, frame, pos, tpl_generated_key,
+                                      &num_encrypted_bytes,
+                                      &num_not_encrypted_at_end);
+        if (!ok)
+        {
+            return false;
+        }
+
+        // Security mode 10 has no 2f2f check bytes, instead the aes-ccm tag
+        // computed over the tpl header and the plaintext protects both the
+        // integrity of the content and the correctness of the key.
+        if (!tpl_ccm_tag_ok)
+        {
+            decoding_errors = joinStatusOKStrings(decoding_errors, "FAILED_DECODE");
+            if (parser_warns_)
+            {
+                if (!beingAnalyzed() && (isVerboseEnabled() || isDebugEnabled() || !warned_for_telegram_before(this, dll_a)))
+                {
+                    // Print this warning only once! Unless you are using verbose or debug.
+                    warning("(wmbus) WARNING!!! aes-ccm authentication tag did not verify, wrong key or corrupted telegram? "
+                            "Marking telegrams from id: %02x%02x%02x%02x mfct: (%s) %s (0x%02x) type: %s (0x%02x) ver: 0x%02x\n",
+                            dll_id_b[3], dll_id_b[2], dll_id_b[1], dll_id_b[0],
+                            manufacturerFlag(dll_mfct).c_str(),
+                            manufacturer(dll_mfct).c_str(),
+                            dll_mfct,
+                            mediaType(dll_type, dll_mfct).c_str(), dll_type,
+                            dll_version);
+                }
+            }
         }
     }
     else if (tpl_sec_mode == TPLSecurityMode::DES_NO_IV_DEPRECATED)
@@ -1859,7 +1986,7 @@ bool Telegram::parse_TPL_78(vector<uchar>::iterator &pos)
 bool Telegram::parse_TPL_79(vector<uchar>::iterator &pos)
 {
     MVT mvt = {(uint16_t)dll_mfct, dll_version, dll_type};
-    
+
     bool ok = false;
 
     CHECK(2);
@@ -2417,7 +2544,49 @@ string renderAnalysisAsText(vector<Explanation> &explanations, OutputFormat of)
 
 string renderAnalysisAsJson(vector<Explanation> &explanations)
 {
-    return "{ \"TODO\": true }\n";
+    auto rd = xmqNewDoc();
+    assert(rd.status == XMQ_OK);
+    XMQDoc *doc = rd.doc;
+
+    auto rn = xmqAddRootElement(doc, "analysis", NS_NONE);
+    assert(rn.status == XMQ_OK);
+    XMQNode *analysis = rn.node;
+
+    rn = xmqAddElementWithAttrs(doc, analysis, "explanations", NS_PARENT, XMQ_ATTRS( { "A", "" } ));
+    assert(rn.status == XMQ_OK);
+    XMQNode *items = rn.node;
+
+    for (auto &p : explanations)
+    {
+        rn = xmqAddElement(doc, items, "range", NS_PARENT);
+        assert(rn.status == XMQ_OK);
+        XMQNode *item = rn.node;
+
+        xmqAddKeyValue(doc, item, "pos", to_string(p.pos).c_str(), NS_PARENT);
+        xmqAddKeyValue(doc, item, "len", to_string(p.len).c_str(), NS_PARENT);
+        xmqAddKeyValue(doc, item, "info", p.info.c_str(), NS_PARENT);
+        if (p.ixml_parse.length() > 0)
+        {
+            xmqAddKeyValue(doc, item, "ixml_parse", p.ixml_parse.c_str(), NS_PARENT);
+        }
+        xmqAddKeyValue(doc, item, "kind", p.kind == KindOfData::PROTOCOL ? "PROTOCOL" : "CONTENT", NS_PARENT);
+
+        const char *u;
+        switch (p.understanding)
+        {
+            case Understanding::FULL:      u = "FULL"; break;
+            case Understanding::PARTIAL:   u = "PARTIAL"; break;
+            case Understanding::ENCRYPTED: u = "ENCRYPTED"; break;
+            case Understanding::COMPRESSED: u = "COMPRESSED"; break;
+            case Understanding::NONE:      u = "NONE"; break;
+            default:                       u = "NONE"; break;
+        }
+        xmqAddKeyValue(doc, item, "understanding", u, NS_PARENT);
+    }
+
+    string result = docToString(doc, XMQ_CONTENT_JSON, false);
+    xmqFreeDoc(doc);
+    return result;
 }
 
 string Telegram::analyzeParse(OutputFormat format, int *content_length, int *understood_content_length)
@@ -3121,7 +3290,7 @@ double vifScale(int vif)
         */
 
     default: warning("(wmbus) warning: type 0x%x cannot be scaled!\n", vif);
-        return -1;
+        return -1000000;
     }
 }
 
@@ -3898,12 +4067,12 @@ string vif_7D_SecondExtensionType(uchar dif, uchar vif, uchar vife)
         return "Date and time of battery change";
     }
 
-    if ((vife & 0x7f) >= 0x71) {
-        return "Reserved";
-    }
-
     if ((vife & 0x7f) == 0x74) {
         return "Remaining battery in days";
+    }
+
+    if ((vife & 0x7f) >= 0x71) {
+        return "Reserved";
     }
 
     return "?";
@@ -4312,16 +4481,40 @@ void setIgnoreDuplicateTelegrams(bool idt)
     ignore_duplicate_telegrams_ = idt;
 }
 
-static bool detailed_first_ = false;
+static TelegramDetails telegram_details_ = TelegramDetails::NEVER;
 
-void setDetailedFirst(bool df)
+void setTelegramDetails(TelegramDetails td)
 {
-    detailed_first_ = df;
+    telegram_details_ = td;
 }
 
-bool getDetailedFirst()
+TelegramDetails getTelegramDetails()
 {
-    return detailed_first_;
+    return telegram_details_;
+}
+
+static bool add_telegram_hex_ = false;
+
+void setAddTelegramHex(bool b)
+{
+    add_telegram_hex_ = b;
+}
+
+bool getAddTelegramHex()
+{
+    return add_telegram_hex_;
+}
+
+static bool add_telegram_structured_ = false;
+
+void setAddTelegramStructured(bool b)
+{
+    add_telegram_structured_ = b;
+}
+
+bool getAddTelegramStructured()
+{
+    return add_telegram_structured_;
 }
 
 bool BusDeviceCommonImplementation::handleTelegram(AboutTelegram &about, vector<uchar> frame)
@@ -4697,6 +4890,18 @@ LIST_OF_TPL_SECURITY_MODES
     }
 
     return TPLSecurityMode::SPECIFIC_16_31;
+}
+
+const char *toString(TPLStatusBit b)
+{
+    switch (b) {
+
+#define X(name,mask,value) case TPLStatusBit::name : return #name;
+LIST_OF_TPL_STATUS_BITS
+#undef X
+    }
+
+    return "?";
 }
 
 int toInt(ELLSecurityMode esm)
@@ -5204,14 +5409,10 @@ string decodeTPLStatusByteOnlyStandardBits(uchar sts)
     string s;
 
     if (sts == 0) return "OK";
-    if ((sts & 0x03) == 0x01) s += "BUSY ";  // Meter busy, cannot respond.
-    if ((sts & 0x03) == 0x02) s += "ERROR "; // E.g. meter failed to understand a message sent to it.
-                                             // More information about the error can be sent using error reporting, EN13757-3:2018 §10
-    if ((sts & 0x03) == 0x03) s += "ALARM "; // E.g. an abnormal condition like water is continuously running.
 
-    if ((sts & 0x04) == 0x04) s += "POWER_LOW "; // E.g. battery end of life or external power supply failure
-    if ((sts & 0x08) == 0x08) s += "PERMANENT_ERROR "; // E.g. meter needs service to work again.
-    if ((sts & 0x10) == 0x10) s += "TEMPORARY_ERROR ";
+#define X(name,mask,value) if ((sts & mask) == value) { s += #name " "; }
+LIST_OF_TPL_STATUS_BITS
+#undef X
 
     while (s.size() > 0 && s.back() == ' ') s.pop_back();
     return s;
@@ -5223,7 +5424,8 @@ string decodeTPLStatusByteNoMfct(uchar sts)
 
     if ((sts & 0xe0) != 0)
     {
-        t = tostrprintf("UNKNOWN_%02X", sts & 0xe0);
+        // Vendor-specific bits (5-7) are not standardized; report them as TPL_STS_<decimal-value>.
+        t = tostrprintf("TPL_STS_%u", sts & 0xe0);
     }
 
     return t;

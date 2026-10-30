@@ -1,5 +1,7 @@
 #!/bin/sh
 
+. tests/include.sh
+
 PROG="$1"
 
 if [ "$PROG" = "" ]
@@ -224,7 +226,7 @@ Received telegram from: 95969798
           manufacturer: (APA) Apator, Poland (0x601)
                   type: Cold water meter (0x16) encrypted
                    ver: 0x01
-                driver: ultrimis
+                driver: ultrimisv2
 Received telegram from: 12345679
           manufacturer: (EFE) Engelmann Sensor, Germany (0x14c5)
                   type: Heat meter (0x04) encrypted
@@ -353,7 +355,7 @@ RES=$($PROG --logfile=$LOGFILE --t1 simulations/simulation_t1.txt 2>&1)
 
 if [ ! "$RES" = "" ]
 then
-    echo ERROR: $TESTNAME
+    printERROR "$TESTNAME"
     echo Expected no output on stdout and stderr
     echo but got------------------
     echo $RES
@@ -365,13 +367,13 @@ RES=$(diff $LOGFILE $LOGFILE_EXPECTED)
 
 if [ ! -z "$RES" ]
 then
-    echo ERROR: $TESTNAME
+    printERROR "$TESTNAME"
     echo -----------------
     diff $LOGFILE $LOGFILE_EXPECTED
     echo -----------------
     exit 1
 else
-    echo OK: $TESTNAME
+    printOK "$TESTNAME"
 fi
 
 TESTNAME="Test listen and print any meter heard on stdout"
@@ -383,11 +385,11 @@ RES=$(diff $LOGFILE $LOGFILE_EXPECTED)
 
 if [ ! -z "$RES"  ]
 then
-    echo ERROR: $TESTNAME
+    printERROR "$TESTNAME"
     echo -----------------
     diff $LOGFILE $LOGFILE_EXPECTED
     echo -----------------
     exit 1
 else
-    echo OK: $TESTNAME
+    printOK "$TESTNAME"
 fi

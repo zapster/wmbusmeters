@@ -1,5 +1,7 @@
 #!/bin/sh
 
+. tests/include.sh
+
 PROG="$1"
 
 mkdir -p testoutput
@@ -15,8 +17,8 @@ cat <<EOF > $TEST/test_expected.txt
 EOF
 
 $PROG --format=fields --separator=';' \
-      --selectfields=id,name,total_l,total_m3,max_flow_m3h,flow_temperature_c,flow_temperature_f \
-      --calculate_total_l=total_m3 --calculate_flow_temperature_f=flow_temperature_c \
+      --selectfields=id,name,total_l,total_m3,max_flow_last_month_m3h,min_flow_temperature_last_month_c,flow_temperature_f \
+      --calculate_total_l=total_m3 --calculate_flow_temperature_f=min_flow_temperature_last_month_c \
       simulations/simulation_c1.txt Vatten multical21 76348799 "" \
       > $TEST/test_output.txt
 
@@ -25,13 +27,13 @@ then
     diff $TEST/test_expected.txt $TEST/test_output.txt
     if [ "$?" = "0" ]
     then
-        echo OK: $TESTNAME
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     fi
 fi
 
 if [ "$TESTRESULT" = "ERROR" ]
 then
-    echo ERROR: $TESTNAME
+    printERROR "$TESTNAME"
     exit 1
 fi

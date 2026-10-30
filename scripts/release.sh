@@ -9,19 +9,21 @@ then
     exit 0
 fi
 
+RELEASE_CHANGES=$(mktemp)
+trap 'rm -f "$RELEASE_CHANGES"' EXIT
+
 # Grab all text up to the "Version x.y.z <date>" line
 # If there is no text, then we have to add some information to CHANGES
 # before we make a release.
-CHANGES=$(sed '/Version /q' CHANGES | grep -v ^Version | sed '/./,$!d' | \
-          tac | sed -e '/./,$!d' | tac | sed -e '/./,$!d' > /tmp/release_changes)
+CHANGES=$(sed '/^Version [0-9]/q' CHANGES | grep -v '^Version [0-9]' | sed '/./,$!d' | tac | sed '/./,$!d' | tac | sed '/./,$!d' > "$RELEASE_CHANGES")
 
-if [ ! -s /tmp/release_changes ]
+if [ ! -s "$RELEASE_CHANGES" ]
 then
     echo "Oups! There are no changes declared in the CHANGES file. There should be some for a release!"
     exit 0
 fi
 
-VERSION=$(grep -m 1 ^Version CHANGES  | sed 's/Version \([0-9]\+\)\.\([0-9]\+\)\.\([0-9]\+\)\(-RC[ 0-9]\?\)\? .*/\1 \2 \3 \4/')
+VERSION=$(grep -m 1 -E '^Version [0-9]' CHANGES  | sed 's/Version \([0-9]\+\)\.\([0-9]\+\)\.\([0-9]\+\)\(-RC[ 0-9]\?\)\? .*/\1 \2 \3 \4/')
 
 MAJOR=$(echo "$VERSION" | cut -f 1 -d ' ')
 MINOR=$(echo "$VERSION" | cut -f 2 -d ' ')
@@ -64,7 +66,7 @@ MESSAGE="Version $RC_VERSION $(date +'%Y-%m-%d')"
 echo
 echo "Creating release candidate >>$MESSAGE<< with changelog:"
 echo "----------------------------------------------------------------------------------"
-cat /tmp/release_changes
+cat "$RELEASE_CHANGES"
 echo "----------------------------------------------------------------------------------"
 echo
 while true; do

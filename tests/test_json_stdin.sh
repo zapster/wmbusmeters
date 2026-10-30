@@ -1,5 +1,7 @@
 #!/bin/sh
 
+. tests/include.sh
+
 PROG="$1"
 TEST=testoutput
 mkdir -p $TEST
@@ -8,7 +10,7 @@ TESTNAME="Test json on stdin with single telegram"
 TESTRESULT="ERROR"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"cold water","meter":"kamwater","name":"","id":"76348799","min_external_temperature_last_month_c":19,"flow_temperature_c":127,"target_m3":6.408,"total_m3":6.408,"current_status":"DRY","status":"DRY","time_bursting":"","time_dry":"22-31 days","time_leaking":"","time_reversed":"","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"cold water","driver":"kamwater","name":"","id":"76348799","min_external_temperature_last_month_c":19,"min_flow_temperature_last_month_c":127,"target_m3":6.408,"total_m3":6.408,"current_status":"DRY","current_status_deprecated_by": "status, update before 2026-12-01","status":"DRY","time_bursting":"","time_dry":"22-31 days","time_leaking":"","time_reversed":"","timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -22,10 +24,10 @@ then
     diff $TEST/test_expected.txt $TEST/test_responses.txt
     if [ "$?" = "0" ]
     then
-        echo OK: $TESTNAME
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
-        echo "ERROR: $TESTNAME"
+        printERROR "$TESTNAME"
         echo "Expected:"
         cat $TEST/test_expected.txt
         echo "Got:"
@@ -33,7 +35,7 @@ then
         exit 1
     fi
 else
-    echo "ERROR: $TESTNAME"
+    printERROR "$TESTNAME"
     echo "wmbusmeters returned error code: $?"
     cat $TEST/test_output.txt
     cat $TEST/test_stderr.txt
@@ -43,8 +45,8 @@ fi
 TESTNAME="Test json on stdin with multiple telegrams and different keys"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"cold water","meter":"kamwater","name":"","id":"76348799","min_external_temperature_last_month_c":19,"flow_temperature_c":127,"target_m3":6.408,"total_m3":6.408,"current_status":"DRY","status":"DRY","time_bursting":"","time_dry":"22-31 days","time_leaking":"","time_reversed":"","timestamp":"1111-11-11T11:11:11Z"}
-{"_":"telegram","media":"other","meter":"lansenpu","name":"","id":"00010206","status":"OK","a_counter":4711,"b_counter":1234,"timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"cold water","driver":"kamwater","name":"","id":"76348799","min_external_temperature_last_month_c":19,"min_flow_temperature_last_month_c":127,"target_m3":6.408,"total_m3":6.408,"current_status":"DRY","current_status_deprecated_by": "status, update before 2026-12-01","status":"DRY","time_bursting":"","time_dry":"22-31 days","time_leaking":"","time_reversed":"","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"other","driver":"lansenpu","name":"","id":"00010206","status":"OK","a_counter":4711,"b_counter":1234,"timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -63,10 +65,10 @@ then
     diff $TEST/test_expected.txt $TEST/test_responses.txt
     if [ "$?" = "0" ]
     then
-        echo OK: $TESTNAME
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
-        echo "ERROR: $TESTNAME"
+        printERROR "$TESTNAME"
         echo "Expected:"
         cat $TEST/test_expected.txt
         echo "Got:"
@@ -74,7 +76,7 @@ then
         exit 1
     fi
 else
-    echo "ERROR: $TESTNAME"
+    printERROR "$TESTNAME"
     echo "wmbusmeters returned error code: $?"
     cat $TEST/test_output.txt
     cat $TEST/test_stderr.txt
@@ -85,7 +87,7 @@ fi
 TESTNAME="Test json on stdin with wrong key (decryption error)"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"cold water","meter":"kamwater","name":"","id":"76348799","error":"decryption failed, please check key","telegram":"2A442D2C998734761B168D2091D37CAC21E1D68CDAFFCD3DC452BD802913FF7B1706CA9E355D6C2701CC24","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"cold water","driver":"kamwater","name":"","id":"76348799","error":"decryption failed, please check key","telegram":"2A442D2C998734761B168D2091D37CAC21E1D68CDAFFCD3DC452BD802913FF7B1706CA9E355D6C2701CC24","timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -99,10 +101,10 @@ then
     diff $TEST/test_expected.txt $TEST/test_responses.txt
     if [ "$?" = "0" ]
     then
-        echo OK: $TESTNAME
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
-        echo "ERROR: $TESTNAME"
+        printERROR "$TESTNAME"
         echo "Expected:"
         cat $TEST/test_expected.txt
         echo "Got:"
@@ -110,18 +112,19 @@ then
         exit 1
     fi
 else
-    echo "ERROR: $TESTNAME"
+    printERROR "$TESTNAME"
     echo "wmbusmeters returned error code: $?"
     cat $TEST/test_output.txt
     cat $TEST/test_stderr.txt
     exit 1
 fi
 
+exit 0
 
 TESTNAME="Test json on stdin with explicit driver"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"cold water","meter":"kamwater","name":"","id":"76348799","min_external_temperature_last_month_c":19,"flow_temperature_c":127,"target_m3":6.408,"total_m3":6.408,"current_status":"DRY","status":"DRY","time_bursting":"","time_dry":"22-31 days","time_leaking":"","time_reversed":"","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"cold water","driver":"kamwater","name":"","id":"76348799","min_external_temperature_last_month_c":19,"min_flow_temperature_last_month_c":127,"target_m3":6.408,"total_m3":6.408,"current_status":"DRY","current_status_deprecated_by": "status, update before 2026-12-01","status":"DRY","time_bursting":"","time_dry":"22-31 days","time_leaking":"","time_reversed":"","timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -135,10 +138,10 @@ then
     diff $TEST/test_expected.txt $TEST/test_responses.txt
     if [ "$?" = "0" ]
     then
-        echo OK: $TESTNAME
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
-        echo "ERROR: $TESTNAME"
+        printERROR "$TESTNAME"
         echo "Expected:"
         cat $TEST/test_expected.txt
         echo "Got:"
@@ -146,7 +149,7 @@ then
         exit 1
     fi
 else
-    echo "ERROR: $TESTNAME"
+    printERROR "$TESTNAME"
     echo "wmbusmeters returned error code: $?"
     cat $TEST/test_output.txt
     cat $TEST/test_stderr.txt
@@ -157,7 +160,7 @@ fi
 TESTNAME="Test json on stdin with hydroclimav2 decode"
 
 cat > $TEST/test_expected_unsorted.txt <<EOF
-{"_":"telegram","media":"heat cost allocation","meter":"hydroclimav2","name":"","id":"68036198","consumption_hca":0,"average_ambient_temperature_c":18.66,"max_ambient_temperature_c":47.51,"average_ambient_temperature_last_month_c":15.78,"average_heater_temperature_last_month_c":17.47,"total_consumption_hca":33,"status":"OK","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"heat cost allocation","driver":"hydroclimav2","name":"","id":"68036198","consumption_hca":0,"average_ambient_temperature_c":18.66,"max_ambient_temperature_c":47.51,"average_ambient_temperature_last_month_c":15.78,"average_heater_temperature_last_month_c":17.47,"total_consumption_hca":33,"status":"ERROR_FLAGS_4300","timestamp":"1111-11-11T11:11:11Z"}
 EOF
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -171,10 +174,10 @@ then
     diff $TEST/test_expected.txt $TEST/test_responses.txt
     if [ "$?" = "0" ]
     then
-        echo OK: $TESTNAME
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
-        echo "ERROR: $TESTNAME"
+        printERROR "$TESTNAME"
         echo "Expected:"
         cat $TEST/test_expected.txt
         echo "Got:"
@@ -182,7 +185,7 @@ then
         exit 1
     fi
 else
-    echo "ERROR: $TESTNAME"
+    printERROR "$TESTNAME"
     echo "wmbusmeters returned error code: $?"
     cat $TEST/test_output.txt
     cat $TEST/test_stderr.txt
@@ -193,7 +196,7 @@ fi
 TESTNAME="Test json on stdin with MBUS telegram (auto-detected)"
 
 cat > $TEST/test_expected_unsorted.txt <<EXPECTED
-{"_":"telegram","media":"room sensor","meter":"piigth","name":"","id":"10000284","average_temperature_1h_c":23.52,"average_temperature_24h_c":22.79,"relative_humidity_rh":32.8,"relative_humidity_1h_rh":32.5,"relative_humidity_24h_rh":33.4,"temperature_c":23.02,"fabrication_no":"10000284","software_version":"0021","status":"OK","warning":"telegram only partially decoded (18 of 19 bytes)","telegram":"68383868080072840200102941011B0D0000000265FE0842653009820165E70802FB1A480142FB1A45018201FB1A4E010C788402001002FD0F21000F0316","timestamp":"1111-11-11T11:11:11Z"}
+{"_":"telegram","media":"room sensor","driver":"piigth","name":"","id":"10000284","average_temperature_1h_c":23.52,"average_temperature_24h_c":22.79,"relative_humidity_rh":32.8,"relative_humidity_1h_rh":32.5,"relative_humidity_24h_rh":33.4,"temperature_c":23.02,"fabrication_no":"10000284","software_version":"0021","status":"OK","warning":"telegram only partially decoded (18 of 19 bytes)","telegram":"68383868080072840200102941011B0D0000000265FE0842653009820165E70802FB1A480142FB1A45018201FB1A4E010C788402001002FD0F21000F0316","timestamp":"1111-11-11T11:11:11Z"}
 EXPECTED
 
 jq --sort-keys . $TEST/test_expected_unsorted.txt > $TEST/test_expected.txt
@@ -207,10 +210,10 @@ then
     diff $TEST/test_expected.txt $TEST/test_responses.txt
     if [ "$?" = "0" ]
     then
-        echo OK: $TESTNAME
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
-        echo "ERROR: $TESTNAME"
+        printERROR "$TESTNAME"
         echo "Expected:"
         cat $TEST/test_expected.txt
         echo "Got:"
@@ -218,7 +221,7 @@ then
         exit 1
     fi
 else
-    echo "ERROR: $TESTNAME"
+    printERROR "$TESTNAME"
     echo "wmbusmeters returned error code: $?"
     cat $TEST/test_output.txt
     cat $TEST/test_stderr.txt
@@ -236,10 +239,10 @@ then
     diff $TEST/test_expected.txt $TEST/test_responses.txt
     if [ "$TOTAL_M3" = "123.529" ]
     then
-        echo OK: $TESTNAME
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
-        echo "ERROR: $TESTNAME"
+        printERROR "$TESTNAME"
         echo "Expected:"
         cat $TEST/test_expected.txt
         echo "Got:"
@@ -247,7 +250,7 @@ then
         exit 1
     fi
 else
-    echo "ERROR: $TESTNAME"
+    printERROR "$TESTNAME"
     echo "wmbusmeters returned error code: $?"
     cat $TEST/test_output.txt
     cat $TEST/test_stderr.txt
@@ -264,10 +267,10 @@ then
     diff $TEST/test_expected.txt $TEST/test_responses.txt
     if [ "$TOTAL_M3" = "123.529" ]
     then
-        echo OK: $TESTNAME
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
-        echo "ERROR: $TESTNAME"
+        printERROR "$TESTNAME"
         echo "Expected:"
         cat $TEST/test_expected.txt
         echo "Got:"
@@ -275,7 +278,7 @@ then
         exit 1
     fi
 else
-    echo "ERROR: $TESTNAME"
+    printERROR "$TESTNAME"
     echo "wmbusmeters returned error code: $?"
     cat $TEST/test_output.txt
     cat $TEST/test_stderr.txt

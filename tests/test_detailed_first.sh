@@ -1,5 +1,7 @@
 #!/bin/sh
 
+. tests/include.sh
+
 PROG="$1"
 
 mkdir -p testoutput
@@ -8,19 +10,56 @@ TEST=testoutput
 TESTNAME="Test detailed first telegram"
 TESTRESULT="ERROR"
 
-$PROG --detailedfirst --format=json 1844AE4C4455223368077A55000000_041389E20100023B0000 Gurka iperl 33225544 NOKEY | jq . --sort-keys | grep -v timestamp > $TEST/test_output.txt 2>&1
+$PROG --addtelegramdetails --format=json 1844AE4C4455223368077A55000000_041389E20100023B0000 Gurka iperl 33225544 NOKEY | jq . --sort-keys | grep -v timestamp > $TEST/test_output.txt 2>&1
 
 cat <<EOF > $TEST/test_expected.txt
 {
   "_": "telegram",
+  "details": {
+    "fields": {
+      "max_flow_m3h": {
+        "change": "Sample",
+        "info": "The maximum water flow recorded during previous period.",
+        "quantity": "Flow",
+        "unit": "m3h"
+      },
+      "status": {
+        "flags": [
+          "ALARM",
+          "BUSY",
+          "ERROR",
+          "PERMANENT_ERROR",
+          "POWER_LOW",
+          "TEMPORARY_ERROR"
+        ],
+        "info": "Meter status including the tpl status.",
+        "quantity": "Flags"
+      },
+      "total_m3": {
+        "change": "Increasing",
+        "info": "The total water consumption.",
+        "quantity": "Volume",
+        "unit": "m3"
+      }
+    },
+    "flags": {
+      "ALARM": "Abnormal condition/alarm. (tpl sts)",
+      "BUSY": "Meter busy. (tpl sts)",
+      "ERROR": "Meter error; details via error reporting. (tpl sts)",
+      "PERMANENT_ERROR": "Permanent meter error. (tpl sts)",
+      "POWER_LOW": "Power low. (tpl sts)",
+      "TEMPORARY_ERROR": "Temporary meter error. (tpl sts)"
+    },
+    "info": "Water meter",
+    "mvt": "SEN,68,07"
+  },
+  "driver": "iperl",
   "id": "33225544",
   "max_flow_m3h": 0,
-  "max_flow_m3h_field": 1,
   "media": "water",
-  "meter": "iperl",
   "name": "Gurka",
-  "total_m3": 123.529,
-  "total_m3_field": 0
+  "status": "OK",
+  "total_m3": 123.529
 }
 EOF
 
@@ -29,7 +68,7 @@ then
     diff $TEST/test_expected.txt $TEST/test_output.txt
     if [ "$?" = "0" ]
     then
-        echo OK: $TESTNAME
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
         if [ "$USE_MELD" = "true" ]
@@ -41,6 +80,6 @@ fi
 
 if [ "$TESTRESULT" = "ERROR" ]
 then
-    echo ERROR: $TESTNAME
+    printERROR "$TESTNAME"
     exit 1
 fi

@@ -1,5 +1,7 @@
 #!/bin/sh
 
+. tests/include.sh
+
 PROG="$1"
 TEST=testoutput
 mkdir -p $TEST
@@ -7,11 +9,11 @@ mkdir -p $TEST
 performCheck() {
 if [ "$?" = "0" ]
 then
-    cat $TEST/test_output.txt | sed 's/"timestamp":"....-..-..T..:..:..Z"/"timestamp":"1111-11-11T11:11:11Z"/' > $TEST/test_response.txt
+    cat $TEST/test_output.txt | sed 's/"timestamp": "....-..-..T..:..:..Z"/"timestamp": "1111-11-11T11:11:11Z"/' > $TEST/test_response.txt
     diff $TEST/test_expected.txt $TEST/test_response.txt
     if [ "$?" = "0" ]
     then
-        echo "OK: $TESTNAME"
+        printOK "$TESTNAME"
         TESTRESULT="OK"
     else
         if [ "$USE_MELD" = "true" ]
@@ -20,7 +22,7 @@ then
         fi
     fi
 else
-    echo "ERROR: $TESTNAME $0"
+    printERROR "$TESTNAME $0"
     echo "wmbusmeters returned error code: $?"
     cat $TEST/test_output.txt
 fi
@@ -51,12 +53,12 @@ Using driver   : kamwater 00/00
 019 CE: 8CDAFFCD3DC452BD802913FF7B1706CA9E355D6C2701CC24 failed decryption. Wrong key?
 
 {
-    "_":"telegram",
-    "media":"cold water",
-    "meter":"kamwater",
-    "name":"",
-    "id":"76348799",
-    "timestamp":"1111-11-11T11:11:11Z"
+    "_": "telegram",
+    "media": "cold water",
+    "driver": "kamwater",
+    "name": "",
+    "id": "76348799",
+    "timestamp": "1111-11-11T11:11:11Z"
 }
 EOF
 
@@ -89,12 +91,12 @@ Using driver   : kamwater 00/00
 019 CE: A1F10E1B79B5EB4B17E81F930E937EE06C failed decryption. Wrong key?
 
 {
-    "_":"telegram",
-    "media":"cold water",
-    "meter":"kamwater",
-    "name":"",
-    "id":"76348799",
-    "timestamp":"1111-11-11T11:11:11Z"
+    "_": "telegram",
+    "media": "cold water",
+    "driver": "kamwater",
+    "name": "",
+    "id": "76348799",
+    "timestamp": "1111-11-11T11:11:11Z"
 }
 EOF
 
@@ -127,12 +129,12 @@ Using driver   : kamwater 00/00
 019 CE: 8CDAFFCD3DC452BD802913FF7B1706CA9E355D6C2701CC24 failed decryption. Wrong key?
 
 {
-    "_":"telegram",
-    "media":"cold water",
-    "meter":"kamwater",
-    "name":"",
-    "id":"76348799",
-    "timestamp":"1111-11-11T11:11:11Z"
+    "_": "telegram",
+    "media": "cold water",
+    "driver": "kamwater",
+    "name": "",
+    "id": "76348799",
+    "timestamp": "1111-11-11T11:11:11Z"
 }
 EOF
 
@@ -151,7 +153,7 @@ cat > $TEST/test_expected.txt <<EOF
 Auto driver    : kamwater
 Similar driver : unknown 00/00
 Using driver   : kamwater 00/00
-000   : 2a length (42 bytes)(OK)
+000   : 2a length (42 bytes)(OK)(OK)
 001   : 44 dll-c (from meter SND_NR)
 002   : 2d2c dll-mfct (KAM)
 004   : 99873476 dll-id (76348799)
@@ -175,28 +177,29 @@ Using driver   : kamwater 00/00
 033 C!: 08190000 ("target_m3":6.408)
 037   : 61 dif (8 Bit Integer/Binary Minimum value storagenr=1)
 038   : 5B vif (Flow temperature °C)
-039 C!: 7F ("flow_temperature_c":127)
+039 C!: 7F ("min_flow_temperature_last_month_c":127)
 040   : 61 dif (8 Bit Integer/Binary Minimum value storagenr=1)
 041   : 67 vif (External temperature °C)
 042 C!: 13 ("min_external_temperature_last_month_c":19)
 
 {
-    "_":"telegram",
-    "media":"cold water",
-    "meter":"kamwater",
-    "name":"",
-    "id":"76348799",
-    "flow_temperature_c":127,
-    "min_external_temperature_last_month_c":19,
-    "target_m3":6.408,
-    "total_m3":6.408,
-    "current_status":"DRY",
-    "status":"DRY",
-    "time_bursting":"",
-    "time_dry":"22-31 days",
-    "time_leaking":"",
-    "time_reversed":"",
-    "timestamp":"1111-11-11T11:11:11Z"
+    "_": "telegram",
+    "media": "cold water",
+    "driver": "kamwater",
+    "name": "",
+    "id": "76348799",
+    "min_external_temperature_last_month_c": 19,
+    "min_flow_temperature_last_month_c": 127,
+    "target_m3": 6.408,
+    "total_m3": 6.408,
+    "current_status": "DRY",
+    "current_status_deprecated_by": "status, update before 2026-12-01",
+    "status": "DRY",
+    "time_bursting": "",
+    "time_dry": "22-31 days",
+    "time_leaking": "",
+    "time_reversed": "",
+    "timestamp": "1111-11-11T11:11:11Z"
 }
 EOF
 
@@ -215,7 +218,7 @@ cat > $TEST/test_expected.txt <<EOF
 Auto driver    : kamwater
 Similar driver : unknown 00/00
 Using driver   : kamwater 00/00
-000   : 23 length (35 bytes)(OK)
+000   : 23 length (35 bytes)(OK)(OK)
 001   : 44 dll-c (from meter SND_NR)
 002   : 2d2c dll-mfct (KAM)
 004   : 99873476 dll-id (76348799)
@@ -232,26 +235,27 @@ Using driver   : kamwater 00/00
 024 C!: 7100 ("status16":"DRY") ("current_status":"DRY") ("time_dry":"22-31 days") ("time_reversed":"") ("time_leaking":"") ("time_bursting":"")
 026 C!: 09190000 ("total_m3":6.409)
 030 C!: 09190000 ("target_m3":6.409)
-034 C!: 7F ("flow_temperature_c":127)
+034 C!: 7F ("min_flow_temperature_last_month_c":127)
 035 C!: 16 ("min_external_temperature_last_month_c":22)
 
 {
-    "_":"telegram",
-    "media":"cold water",
-    "meter":"kamwater",
-    "name":"",
-    "id":"76348799",
-    "flow_temperature_c":127,
-    "min_external_temperature_last_month_c":22,
-    "target_m3":6.409,
-    "total_m3":6.409,
-    "current_status":"DRY",
-    "status":"DRY",
-    "time_bursting":"",
-    "time_dry":"22-31 days",
-    "time_leaking":"",
-    "time_reversed":"",
-    "timestamp":"1111-11-11T11:11:11Z"
+    "_": "telegram",
+    "media": "cold water",
+    "driver": "kamwater",
+    "name": "",
+    "id": "76348799",
+    "min_external_temperature_last_month_c": 22,
+    "min_flow_temperature_last_month_c": 127,
+    "target_m3": 6.409,
+    "total_m3": 6.409,
+    "current_status": "DRY",
+    "current_status_deprecated_by": "status, update before 2026-12-01",
+    "status": "DRY",
+    "time_bursting": "",
+    "time_dry": "22-31 days",
+    "time_leaking": "",
+    "time_reversed": "",
+    "timestamp": "1111-11-11T11:11:11Z"
 }
 EOF
 

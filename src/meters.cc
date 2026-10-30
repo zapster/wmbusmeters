@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2017-2023 Fredrik Öhrström (gpl-3.0-or-later)
+ Copyright (C) 2017-2026 Fredrik Öhrström (gpl-3.0-or-later)
 
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 #include"meters.h"
 #include"meters_common_implementation.h"
 #include"units.h"
+#include"utils/doc.h"
 #include"wmbus.h"
 #include"wmbus_utils.h"
 
@@ -208,7 +209,7 @@ bool staticRegisterDriver(function<void(DriverInfo&)> setup)
     return true;
 }
 
-static XMQProceed collect_mvt_cb(XMQDoc *doc, XMQNodePtr node, vector<MVT> *mvts)
+static XMQProceed collect_mvt_cb(XMQDoc *doc, XMQNode *node, vector<MVT> *mvts)
 {
     string mvt_s = xmqGetStringRel(doc, ".", node);
     auto fields = splitString(mvt_s, ',');
@@ -232,7 +233,7 @@ static XMQProceed collect_mvt_cb(XMQDoc *doc, XMQNodePtr node, vector<MVT> *mvts
 
 struct RegisterCFFContext { vector<MVT> *mvts; };
 
-static XMQProceed register_compact_frame_format_cb(XMQDoc *doc, XMQNodePtr node, RegisterCFFContext *ctx)
+static XMQProceed register_compact_frame_format_cb(XMQDoc *doc, XMQNode *node, RegisterCFFContext *ctx)
 {
     const char *difvif_s = xmqGetStringRel(doc, ".", node);
     if (!difvif_s) return XMQ_CONTINUE;
@@ -618,6 +619,7 @@ void MeterCommonImplementation::markLastFieldAsLibrary()
     num_driver_fields_--;
 }
 
+
 FieldInfo *MeterCommonImplementation::lastAddedField()
 {
     return &field_infos_.back();
@@ -631,7 +633,8 @@ void MeterCommonImplementation::addNumericFieldWithExtractor(string vname,
                                                              DifSignedness dif_signedness,
                                                              FieldMatcher matcher,
                                                              Unit display_unit,
-                                                             double scale)
+                                                             double scale,
+                                                             Unit override_vif_unit)
 {
     size_t index = num_driver_fields_++;
     field_infos_.emplace_back(
@@ -639,6 +642,7 @@ void MeterCommonImplementation::addNumericFieldWithExtractor(string vname,
                   vname,
                   vquantity,
                   display_unit == Unit::Unknown ? defaultUnitForQuantity(vquantity) : display_unit,
+                  override_vif_unit,
                   vif_scaling,
                   dif_signedness,
                   scale,
@@ -681,6 +685,7 @@ void MeterCommonImplementation::addNumericFieldWithCalculator(string vname,
                   vname,
                   vquantity,
                   display_unit == Unit::Unknown ? defaultUnitForQuantity(vquantity) : display_unit,
+                  Unit::Unknown,
                   VifScaling::Auto,
                   DifSignedness::Signed,
                   1.0,
@@ -724,6 +729,7 @@ void MeterCommonImplementation::addNumericFieldWithCalculatorAndMatcher(string v
                   vname,
                   vquantity,
                   display_unit == Unit::Unknown ? defaultUnitForQuantity(vquantity) : display_unit,
+                  Unit::Unknown, // No force unit.
                   VifScaling::Auto,
                   DifSignedness::Signed,
                   1.0,
@@ -754,6 +760,7 @@ void MeterCommonImplementation::addNumericField(
                   vname,
                   vquantity,
                   display_unit == Unit::Unknown ? defaultUnitForQuantity(vquantity) : display_unit,
+                  Unit::Unknown, // No forced unit
                   VifScaling::None,
                   DifSignedness::Signed,
                   1.0,
@@ -775,14 +782,16 @@ void MeterCommonImplementation::addStringFieldWithExtractor(string vname,
                                                             PrintProperties print_properties,
                                                             FieldMatcher matcher,
                                                             string ixml,
-                                                            bool match_entire_payload)
+                                                            bool match_entire_payload,
+                                                            Quantity vquantity)
 {
     size_t index = num_driver_fields_++;
     field_infos_.emplace_back(
         FieldInfo(index,
                   vname,
-                  Quantity::Text,
-                  defaultUnitForQuantity(Quantity::Text),
+                  vquantity,
+                  defaultUnitForQuantity(vquantity),
+                  Unit::Unknown, // Do not override VIF unit.
                   VifScaling::None,
                   DifSignedness::Signed,
                   1.0,
@@ -811,14 +820,16 @@ void MeterCommonImplementation::addStringFieldWithExtractorAndLookup(string vnam
                                                                      string help,
                                                                      PrintProperties print_properties,
                                                                      FieldMatcher matcher,
-                                                                     Translate::Lookup lookup)
+                                                                     Translate::Lookup lookup,
+                                                                     Quantity vquantity)
 {
     size_t index = num_driver_fields_++;
     field_infos_.emplace_back(
         FieldInfo(index,
                   vname,
-                  Quantity::Text,
-                  defaultUnitForQuantity(Quantity::Text),
+                  vquantity,
+                  defaultUnitForQuantity(vquantity),
+                  Unit::Unknown, // No forced unit.
                   VifScaling::None,
                   DifSignedness::Signed,
                   1.0,
@@ -837,14 +848,16 @@ void MeterCommonImplementation::addStringFieldWithExtractorAndLookup(string vnam
 
 void MeterCommonImplementation::addStringField(string vname,
                                                string help,
-                                               PrintProperties print_properties)
+                                               PrintProperties print_properties,
+                                               Quantity vquantity)
 {
     size_t index = num_driver_fields_++;
     field_infos_.emplace_back(
         FieldInfo(index,
                   vname,
-                  Quantity::Text,
-                  defaultUnitForQuantity(Quantity::Text),
+                  vquantity,
+                  defaultUnitForQuantity(vquantity),
+                  Unit::Unknown, // No forced unit.
                   VifScaling::None,
                   DifSignedness::Signed,
                   1.0,
@@ -1164,7 +1177,7 @@ bool driverNeedsPolling(DriverName& dn)
 
 const char *toString(MeterType type)
 {
-#define X(tname) if (type == MeterType::tname) return #tname;
+#define X(tname,desc) if (type == MeterType::tname) return #tname;
 LIST_OF_METER_TYPES
 #undef X
     return "unknown";
@@ -1172,10 +1185,18 @@ LIST_OF_METER_TYPES
 
 MeterType toMeterType(string type)
 {
-#define X(tname) if (type == #tname) return MeterType::tname;
+#define X(tname,desc) if (type == #tname) return MeterType::tname;
 LIST_OF_METER_TYPES
 #undef X
     return MeterType::UnknownMeter;
+}
+
+const char *defaultMeterTypeText(MeterType type)
+{
+#define X(tname,desc) if (type == MeterType::tname) return desc;
+LIST_OF_METER_TYPES
+#undef X
+    return "";
 }
 
 const char *toString(ReadableString rs)
@@ -1405,7 +1426,7 @@ bool checkPrintableField(string *buf, string desired_field, Meter *m, Telegram *
 
     for (FieldInfo &fi : fields)
     {
-        if (fi.xuantity() == Quantity::Text)
+        if (nonNumericQuantity(fi.xuantity()))
         {
             // Strings are simply just print them.
             if (desired_field == fi.vname())
@@ -1413,7 +1434,7 @@ bool checkPrintableField(string *buf, string desired_field, Meter *m, Telegram *
                 // Unless it is the status field...
                 if (fi.printProperties().hasSTATUS())
                 {
-                    string s = ((MeterCommonImplementation*)m)->getStatusField(&fi);
+                    string s = ((MeterCommonImplementation*)m)->getStatusFlags(&fi);
                     if (t->decoding_errors != "")
                     {
                         s = joinStatusOKStrings(s, t->decoding_errors);
@@ -1519,6 +1540,160 @@ string concatFields(Meter *m, Telegram *t, char c, vector<FieldInfo> &prints, bo
     return buf;
 }
 
+string extractMVTs(Telegram *t);
+
+string extractMVTs(Telegram *t)
+{
+    string s;
+    if (t->tpl_id_found)
+    {
+        s = manufacturerFlag(t->tpl_mfct)+tostrprintf(",%02x,%02x", t->tpl_version, t->tpl_type);
+    }
+    else if (t->ell_id_found)
+    {
+        s = manufacturerFlag(t->ell_mfct)+tostrprintf(",%02x,%02x", t->ell_version, t->ell_type);
+    }
+    else
+    {
+        s = manufacturerFlag(t->dll_mfct)+tostrprintf(",%02x,%02x", t->dll_version, t->dll_type);
+    }
+    return s;
+}
+
+void MeterCommonImplementation::buildOutputDoc(XMQDoc *doc,
+                                               string id,
+                                               string media,
+                                               Telegram *t,
+                                               vector<FieldInfo> &prints,
+                                               vector<string> *extra_constant_fields,
+                                               bool first)
+{
+    XMQReturnNode rn = xmqAddRootElement(doc, "telegram", NS_NONE);
+    assert(rn.status == XMQ_OK);
+    XMQNode *telegram = rn.node;
+
+    if (driverInfo()->hasError())
+    {
+        string e = driverInfo()->errorInDriverMsg();
+        trimWhitespace(&e);
+        xmqAddKeyValue(doc, telegram, "driver_error", e.c_str(), NS_PARENT);
+    }
+
+    xmqAddKeyValue(doc, telegram, "media", media.c_str(), NS_PARENT);
+    xmqAddKeyValue(doc, telegram, "driver", driverName().str().c_str(), NS_PARENT);
+    if (driverInfo()->deprecatedBy().length() > 0)
+    {
+        xmqAddKeyValue(doc, telegram, "driver_deprecated_by", driverInfo()->deprecatedBy().c_str(), NS_PARENT);
+    }
+
+    xmqAddKeyValue(doc, telegram, "name", name().c_str(), NS_PARENT);
+    xmqAddKeyValueWithAttrs(doc, telegram, "id", id.c_str(), NS_PARENT,
+                            XMQ_ATTRS( {"S", "" }) ); // S means id will be a string in json, even though
+                                                      // it looks like a number.
+
+    // /details hold meta-data about the telegram
+    XMQNode *details = NULL;
+    // /details/fields hold the meta-data about the fields.
+    XMQNode *details_fields = NULL;
+    // /structured holds the same json data but structured in a way that
+    XMQNode *structured = NULL;
+
+    if (getTelegramDetails() == TelegramDetails::ALWAYS ||
+        (first && getTelegramDetails() == TelegramDetails::FIRST))
+    {
+        rn = xmqAddElement(doc, telegram, "details", NS_PARENT);
+        details = rn.node;
+
+        rn = xmqAddElement(doc, details, "fields", NS_PARENT);
+        details_fields = rn.node;
+
+        string mvts = extractMVTs(t);
+        xmqAddKeyValue(doc, details, "mvt", mvts.c_str(), NS_PARENT);
+
+        string info = t->meter->driverInfo()->getInfo();
+        if (info == "") {
+            info = defaultMeterTypeText(t->meter->driverInfo()->getMeterType());
+        }
+        xmqAddKeyValue(doc, details, "info", info.c_str(), NS_PARENT);
+
+        rn = xmqAddElement(doc, details, "flags", NS_PARENT);
+        assert(rn.status == XMQ_OK);
+
+        XMQNode *flags = rn.node;
+        vector<string> sorted_flags = driverInfo()->sortedFlags();
+        for (string s : sorted_flags)
+        {
+            string info = driverInfo()->getFlagInfo(s);
+            xmqAddKeyValue(doc, flags, s.c_str(), info.c_str(), NS_PARENT);
+        }
+    }
+
+    if (getAddTelegramStructured())
+    {
+        rn = xmqAddElement(doc, telegram, "structured", NS_PARENT);
+        structured = rn.node;
+    }
+
+    if (getAddTelegramHex())
+    {
+        string hex = bin2hex(t->frame);
+        xmqAddKeyValue(doc, telegram, "hex", hex.c_str(), NS_PARENT);
+    }
+
+    // Iterate over the meter field infos...
+    map<FieldInfo*,set<DVEntry*>> founds; // Multiple dventries can match to a single field info.
+    set<string> found_vnames;
+
+    for (auto &p : numeric_values_)
+    {
+        string vname = p.first.first;
+        NumericField& nf = p.second;
+        if (nf.field_info->printProperties().hasHIDE()) continue;
+
+        nf.field_info->insertNumericValueIntoDoc(vname, this, &nf.dv_entry, doc, telegram, details_fields, structured);
+    }
+
+    for (auto &p : string_values_)
+    {
+        string vname = p.first;
+        StringField& sf = p.second;
+
+        if (sf.field_info->printProperties().hasHIDE()) continue;
+
+        sf.field_info->insertStringValueIntoDoc(vname, sf.value, this, t, &sf.dv_entry, doc, telegram, details_fields, structured);
+    }
+    xmqAddKeyValue(doc, telegram, "timestamp", datetimeOfUpdateRobot().c_str(), NS_PARENT);
+
+    if (t->about.device != "")
+    {
+        xmqAddKeyValue(doc, telegram, "device", t->about.device.c_str(), NS_PARENT);
+        xmqAddKeyValue(doc, telegram, "rssi_dbm", to_string(t->about.rssi_dbm).c_str(), NS_PARENT);
+    }
+    for (string extra_field : meterExtraConstantFields())
+    {
+        string k, v;
+        extractKeyValue(extra_field, &k, &v);
+        xmqAddKeyValueWithAttrs(doc, telegram, k.c_str(), v.c_str(), NS_PARENT,
+                                XMQ_ATTRS( { "S", "" } )); // S marks this as a json string.
+    }
+    for (string extra_field : *extra_constant_fields)
+    {
+        string k, v;
+        extractKeyValue(extra_field, &k, &v);
+        xmqAddKeyValueWithAttrs(doc, telegram, k.c_str(), v.c_str(), NS_PARENT,
+                                XMQ_ATTRS( { "S", "" } )); // S marks this as a json string.
+    }
+
+    if (structured)
+    {
+        xmqMoveElement(doc, telegram, structured, doc, telegram, XMQ_MOVE_LAST, NULL);
+    }
+    if (details)
+    {
+        xmqMoveElement(doc, telegram, details, doc, telegram, XMQ_MOVE_LAST, NULL);
+    }
+}
+
 bool MeterCommonImplementation::handleTelegram(AboutTelegram &about, vector<uchar> input_frame,
                                                bool simulated, vector<Address> *addresses,
                                                bool *id_match, Telegram *out_analyzed)
@@ -1551,6 +1726,11 @@ bool MeterCommonImplementation::handleTelegram(AboutTelegram &about, vector<ucha
     if (force_mfct_index_ != -1)
     {
         t.force_mfct_index = force_mfct_index_;
+    }
+
+    if (buggy_sanxing_609b_decode_)
+    {
+        t.permit_sanxing_609b_bug = true;
     }
 
     ok = t.parse(input_frame, &meter_keys_, true);
@@ -1769,10 +1949,42 @@ void MeterCommonImplementation::processFieldIXMLs(Telegram *t)
                     dve->addFieldInfo(&fi);
                     fi.performExtraction(this, t, dve);
                     string value = getStringValue(&fi);
-                    debug("(ixml) parsing field content at offset %d: %s\n", dve->offset, value.c_str());
+                    bool extra_decode = false;
+                    if (try_qundis_decode_)
+                    {
+                        // The Qundis WalkByDataSet block (difvifkey 0DFF5F) is AES-128-CBC
+                        // encrypted on the 2026 Q water/heat/caloric 5.5 when header byte[4]
+                        // == 0x35 (plaintext frames have 0x00 there, see issue #1916/#2025).
+                        // The cipher is standard EN 13757-7 Mode 5 with the configured meter
+                        // key and the Mode-5 IV (M-field + A-field + ACC*8). CI=0x78 frames
+                        // have no TPL header, so the ACC is the block's own rolling counter
+                        // (header byte[2]), not the TPL access number. Decode bytes[5..]
+                        // here so the existing ixml grammar parses the plaintext layout.
+                        extra_decode = tryDecodeQundisWalkByAes(t, &value);
+                    }
+                    debug("(ixml) parsing field content at offset %d: %s%s\n", dve->offset, value.c_str(),
+                          extra_decode ? " (mfct-aes-decoded)" : "");
                     bool ok = parseWithIXML(t, dve->offset, value, fi.ixmlGrammar(), &t->dv_entries);
                     if (!ok)
                     {
+                        if (extra_decode)
+                        {
+                            // The decrypted WalkByDataSet did not match the ixml grammar.
+                            // AES-CBC has no integrity check, so a wrong meter key still
+                            // "decrypts" the block, but into garbage that the grammar
+                            // rejects. Warn once per meter (unless verbose, debug or
+                            // analyze), like the no key warning, see issue #2051.
+                            t->decoding_errors = joinStatusOKStrings(t->decoding_errors, "FAILED_DECODE");
+                            if (isVerboseEnabled() || isDebugEnabled() ||
+                                t->dll_a.size() != 6 ||
+                                !warned_for_telegram_before(t, t->dll_a))
+                            {
+                                // Print this warning only once! Unless you are using verbose or debug.
+                                warning("(qds) WARNING! failed to decode the encrypted WalkByDataSet! "
+                                        "Did you use the correct decryption key for id: %02x%02x%02x%02x\n",
+                                        t->dll_id_b[3], t->dll_id_b[2], t->dll_id_b[1], t->dll_id_b[0]);
+                            }
+                        }
                         vector<uchar> frame;
                         t->extractFrame(&frame);
                         string hex = bin2hex(frame);
@@ -1917,7 +2129,7 @@ void MeterCommonImplementation::processFieldCalculators()
     }
 }
 
-string MeterCommonImplementation::getStatusField(FieldInfo *fi)
+string MeterCommonImplementation::getStatusFlags(FieldInfo *fi)
 {
     string field_name_no_unit = fi->vname();
     if (string_values_.count(field_name_no_unit) == 0)
@@ -1928,18 +2140,15 @@ string MeterCommonImplementation::getStatusField(FieldInfo *fi)
     string value = sf.value;
 
     // This is >THE< status field, only one is allowed.
-    // Look for other fields with the JOIN_INTO_STATUS marker.
+    // Look for other fields with the INJECT_INTO_STATUS marker.
     // These other fields will not be printed, instead
     // joined into this status field.
     for (FieldInfo &f : field_infos_)
     {
         if (f.printProperties().hasINJECTINTOSTATUS())
         {
-            //printf("NOW >%s<\n", value.c_str());
             string more = getStringValue(&f);
-            //printf("MORE >%s<\n", more.c_str());
             string joined = joinStatusOKStrings(value, more);
-            //printf("JOINED >%s<\n", joined.c_str());
             value = joined;
         }
     }
@@ -2036,12 +2245,12 @@ void MeterCommonImplementation::setStringValue(FieldInfo *fi, string v, DVEntry 
     if (dve == NULL)
     {
         string field_name_no_unit = fi->vname();
-        string_values_[field_name_no_unit] = StringField(v, fi);
+        string_values_[field_name_no_unit] = StringField(v, fi, dve);
     }
     else
     {
         field_name_no_unit = fi->generateFieldNameNoUnit(this, dve);
-        string_values_[field_name_no_unit] = StringField(v, fi);
+        string_values_[field_name_no_unit] = StringField(v, fi, dve);
     }
 }
 
@@ -2070,7 +2279,7 @@ string MeterCommonImplementation::getStringValue(FieldInfo *fi)
     if (fi->printProperties().hasSTATUS())
     {
         // This is >THE< status field, only one is allowed.
-        // Look for other fields with the JOIN_INTO_STATUS marker.
+        // Look for other fields with the INJECT_INTO_STATUS marker.
         // These other fields will not be printed, instead
         // joined into this status field.
         for (FieldInfo &f : field_infos_)
@@ -2090,6 +2299,155 @@ string MeterCommonImplementation::getStringValue(FieldInfo *fi)
     }
 
     return value;
+}
+
+void MeterCommonImplementation::setFieldBits(FieldInfo *fi, uint64_t bits, DVEntry *dve)
+{
+    bits_values_[fi->vname()] = bits;
+}
+
+bool MeterCommonImplementation::getFieldBits(FieldInfo *fi, uint64_t *bits)
+{
+    auto i = bits_values_.find(fi->vname());
+    if (i == bits_values_.end()) return false;
+    *bits = i->second;
+    return true;
+}
+
+static void mergeStatusObjectMembers(map<string,bool> &out, const map<string,bool> &in)
+{
+    for (const auto &e : in)
+    {
+        out[e.first] = out[e.first] || e.second;
+    }
+}
+
+map<string,bool> MeterCommonImplementation::getStatusObjectMembers(FieldInfo *fi, Telegram *t)
+{
+    map<string,bool> out;
+
+    uint64_t bits;
+    if (getFieldBits(fi, &bits))
+    {
+        mergeStatusObjectMembers(out, fi->lookup().translateToObject(bits));
+    }
+
+    for (FieldInfo &f : field_infos_)
+    {
+        if (f.printProperties().hasINJECTINTOSTATUS())
+        {
+            uint64_t fbits;
+            if (getFieldBits(&f, &fbits))
+            {
+                mergeStatusObjectMembers(out, f.lookup().translateToObject(fbits));
+            }
+        }
+    }
+
+    if (fi->printProperties().hasINCLUDETPLSTATUS())
+    {
+        uchar sts = t->tpl_sts;
+        map<string,bool> tpl;
+#define X(name,mask,value) tpl[toString(TPLStatusBit::name)] = (sts & mask) == value;
+LIST_OF_TPL_STATUS_BITS
+#undef X
+        mergeStatusObjectMembers(out, tpl);
+
+        if (mfct_tpl_status_bits_.hasLookups() && (sts & 0xe0) != 0)
+        {
+            mergeStatusObjectMembers(out, mfct_tpl_status_bits_.translateToObject(sts & 0xe0));
+        }
+    }
+
+    // FIXME: these names are dynamic :(
+    if (t->decoding_errors != "")
+    {
+        for (const string &w : splitString(t->decoding_errors, ' '))
+        {
+            if (!w.empty()) out[w] = true;
+        }
+    }
+
+    return out;
+}
+
+static void mergeStatusLookupUnknowns(map<string,uint64_t> &out, const map<string,uint64_t> &in)
+{
+    for (const auto &e : in)
+    {
+        out[e.first] |= e.second;
+    }
+}
+
+map<string,uint64_t> MeterCommonImplementation::getStatusLookupUnknowns(FieldInfo *fi, Telegram *t)
+{
+    map<string,uint64_t> out;
+
+    uint64_t bits;
+    if (getFieldBits(fi, &bits))
+        mergeStatusLookupUnknowns(out, fi->lookup().unknownBits(bits));
+
+    // Aggregate the INJECT_INTO_STATUS fields' unknowns, deduped per rule name.
+    for (FieldInfo &f : field_infos_)
+    {
+        if (f.printProperties().hasINJECTINTOSTATUS())
+        {
+            uint64_t fbits;
+            if (getFieldBits(&f, &fbits))
+                mergeStatusLookupUnknowns(out, f.lookup().unknownBits(fbits));
+        }
+    }
+
+    // A field with INCLUDE_TPL_STATUS always reports a TPL_STS entry (0 when the
+    // vendor-specific bits are fully known), just like the other lookups. The
+    // standard bits 0-4 are always named (BUSY/ERROR/ALARM/POWER_LOW/PERMANENT_ERROR/
+    // TEMPORARY_ERROR) so they never contribute to the unknown bits.
+    if (fi->printProperties().hasINCLUDETPLSTATUS())
+    {
+        uint64_t vendor = t->tpl_sts & 0xe0;
+        out["TPL_STS"] |= (vendor & ~mfct_tpl_status_bits_.coveredBits());
+    }
+
+    return out;
+}
+
+vector<string> MeterCommonImplementation::getFieldFlags(FieldInfo *fi)
+{
+    // Use a set so the flag list is deterministic and a name appearing in several
+    // lookups is only reported once.
+    set<string> names;
+    auto addFlags = [&names](const vector<string> &v)
+    {
+        for (const string &s : v)
+            if (s != "") names.insert(s);
+    };
+
+    addFlags(fi->lookup().flagNames());
+
+    // The STATUS field aggregates the lookups of all INJECT_INTO_STATUS fields.
+    if (fi->printProperties().hasSTATUS())
+    {
+        for (FieldInfo &f : field_infos_)
+        {
+            if (f.printProperties().hasINJECTINTOSTATUS())
+                addFlags(f.lookup().flagNames());
+        }
+    }
+
+    // A field with INCLUDE_TPL_STATUS also carries the standard TPL status flags
+    // and any manufacturer-specific TPL status flags.
+    if (fi->printProperties().hasINCLUDETPLSTATUS())
+    {
+        vector<string> tpl;
+#define X(name,mask,value) tpl.push_back(toString(TPLStatusBit::name));
+LIST_OF_TPL_STATUS_BITS
+#undef X
+        addFlags(tpl);
+        addFlags(mfct_tpl_status_bits_.flagNames());
+    }
+
+    vector<string> out(names.begin(), names.end());
+    return out;
 }
 
 string MeterCommonImplementation::decodeTPLStatusByte(uchar sts)
@@ -2153,6 +2511,7 @@ FieldInfo::FieldInfo(int index,
                      string vname,
                      Quantity xuantity,
                      Unit display_unit,
+                     Unit override_vif_unit,
                      VifScaling vif_scaling,
                      DifSignedness dif_signedness,
                      double scale,
@@ -2171,6 +2530,7 @@ FieldInfo::FieldInfo(int index,
         vname_(vname),
         xuantity_(xuantity),
         display_unit_(display_unit),
+        override_vif_unit_(override_vif_unit),
         vif_scaling_(vif_scaling),
         dif_signedness_(dif_signedness),
         scale_(scale),
@@ -2213,7 +2573,7 @@ string FieldInfo::generateFieldNameWithUnit(Meter *m, DVEntry *dve)
 {
     if (!valid_field_name_) return "bad_field_name";
 
-    if (xuantity_ == Quantity::Text)
+    if (nonNumericQuantity(xuantity_))
     {
         return field_name_->apply(m, dve);
     }
@@ -2273,7 +2633,6 @@ bool FieldInfo::transformPayload(Telegram *t, vector<uchar> *content)
     return true;
 }
 
-
 string FieldInfo::renderJson(Meter *m, DVEntry *dve)
 {
     string s;
@@ -2281,7 +2640,7 @@ string FieldInfo::renderJson(Meter *m, DVEntry *dve)
     string display_unit_s = unitToStringLowerCase(displayUnit());
     string field_name = generateFieldNameNoUnit(m, dve);
 
-    if (xuantity() == Quantity::Text)
+    if (nonNumericQuantity(xuantity()))
     {
         string v = m->getStringValue(this);
         if (v == "null")
@@ -2330,6 +2689,161 @@ string FieldInfo::renderJson(Meter *m, DVEntry *dve)
     return s;
 }
 
+void FieldInfo::insertNumericValueIntoDoc(string vname, Meter *m, DVEntry *dve, XMQDoc *doc, XMQNode *telegram, XMQNode *details_fields, XMQNode *structured)
+{
+    string display_unit_s = unitToStringLowerCase(displayUnit());
+    string field_name = generateFieldNameNoUnit(m, dve);
+
+    if (nonNumericQuantity(xuantity()))
+    {
+        // Should we even get here? A numerical value cannot be text right?
+        string v = m->getStringValue(this);
+        if (v == "null")
+        {
+            // Yes, right now a meter cannot send a string value "something":"null" it will
+            // be translated into "something":null in the json, indicating that there is no value.
+            // This should not be a problem for now. Lets deal with it when a meter decides to send "null"
+            // as its version string for example.
+            xmqAddKeyValue(doc, telegram, field_name.c_str(), "null", NS_PARENT);
+        }
+        else
+        {
+            // Normally the string values are quoted in json. TODO quote the value properly.
+            // A well crafted meter could send a version string with " and break the json format.
+            xmqAddKeyValue(doc, telegram, field_name.c_str(), v.c_str(), NS_PARENT);
+        }
+    }
+    else
+    {
+        string key = field_name+"_"+display_unit_s;
+        string val = "";
+
+        if (displayUnit() == Unit::DateLT)
+        {
+            double t = m->getNumericValue(field_name, Unit::DateLT);
+            if (isnan(t)) val = "null";
+            else val = strdate(t);
+        }
+        else if (displayUnit() == Unit::DateTimeLT)
+        {
+            double t = m->getNumericValue(field_name, Unit::DateTimeLT);
+            if (isnan(t)) val = "null";
+            else val = strdatetime(t);
+        }
+        else if (displayUnit() == Unit::DateTimeUTC)
+        {
+            double t = m->getNumericValue(field_name, Unit::DateTimeUTC);
+            if (isnan(t)) val = "null";
+            else val = strTimestampUTC(t);
+        }
+        else
+        {
+            // All numeric values.
+            val = valueToString(m->getNumericValue(field_name, displayUnit()), displayUnit());
+        }
+        xmqAddKeyValue(doc, telegram, key.c_str(), val.c_str(), NS_PARENT);
+        if (deprecatedBy().length() > 0)
+        {
+            string k = key+"_deprecated_by";
+            xmqAddKeyValue(doc, telegram, k.c_str(), deprecatedBy().c_str(), NS_PARENT);
+        }
+        if (details_fields)
+        {
+            auto rn = xmqAddElement(doc, details_fields, key.c_str(), NS_PARENT);
+            XMQNode *info = rn.node;
+            xmqAddKeyValue(doc, info, "quantity", toString(xuantity()), NS_PARENT);
+            xmqAddKeyValue(doc, info, "unit", display_unit_s.c_str(), NS_PARENT);
+            xmqAddKeyValue(doc, info, "change", toString(getChange()), NS_PARENT);
+            xmqAddKeyValue(doc, info, "info", help().c_str(), NS_PARENT);
+            if (deprecatedBy().length() > 0)
+            {
+                xmqAddKeyValue(doc, info, "deprecated_by", deprecatedBy().c_str(), NS_PARENT);
+            }
+        }
+    }
+}
+
+void FieldInfo::insertStringValueIntoDoc(const string &vname, const string &value, Meter *m, Telegram *t, DVEntry *dve, XMQDoc *doc, XMQNode *telegram, XMQNode *details_fields, XMQNode *structured)
+{
+    if (this->printProperties().hasSTATUS())
+    {
+        string in = m->getStatusFlags(this);
+        if (t->decoding_errors != "")
+        {
+            in = joinStatusOKStrings(in, t->decoding_errors);
+        }
+        xmqAddKeyValueWithAttrs(doc, telegram, vname.c_str(), in.c_str(), NS_PARENT,
+                                XMQ_ATTRS( { "S", "" } )); // S marks this as a json string.
+    }
+    else
+    {
+        if (value == "null")
+        {
+            // The string "null" translates to actual json null.
+            xmqAddKeyValue(doc, telegram, vname.c_str(), "null", NS_PARENT);
+        }
+        else
+        {
+            xmqAddKeyValueWithAttrs(doc, telegram, vname.c_str(), value.c_str(), NS_PARENT,
+                                    XMQ_ATTRS( { "S", "" } )); // S marks this as a json string.
+        }
+    }
+
+    if (this->xuantity() == Quantity::Flags && structured)
+    {
+        string vname_flags = vname+"_flags";
+        auto rn = xmqAddElement(doc, structured, vname_flags.c_str(), NS_PARENT);
+        XMQNode *status_object = rn.node;
+        for (auto &member : m->getStatusObjectMembers(this, t))
+        {
+            xmqAddKeyValue(doc, status_object, member.first.c_str(), member.second ? "true" : "false", NS_PARENT);
+        }
+
+        // Sibling to status_flags: the bits that were set in the input value but have no
+        // map entry, per BitToString lookup rule name. Always present; a rule reports 0
+        // when all of its set bits are mapped.
+        string vname_unknowns = vname+"_lookups_unknowns";
+        auto rn_u = xmqAddElement(doc, structured, vname_unknowns.c_str(), NS_PARENT);
+        XMQNode *unknowns_object = rn_u.node;
+        for (auto &kv : m->getStatusLookupUnknowns(this, t))
+        {
+            xmqAddKeyValue(doc, unknowns_object, kv.first.c_str(), to_string(kv.second).c_str(), NS_PARENT);
+        }
+    }
+    if (deprecatedBy().length() > 0)
+    {
+        string k = vname+"_deprecated_by";
+        xmqAddKeyValue(doc, telegram, k.c_str(), deprecatedBy().c_str(), NS_PARENT);
+    }
+    if (details_fields)
+    {
+        auto rn = xmqAddElement(doc, details_fields, vname.c_str(), NS_PARENT);
+        XMQNode *info = rn.node;
+        xmqAddKeyValue(doc, info, "quantity", toString(xuantity()), NS_PARENT);
+        xmqAddKeyValue(doc, info, "info", this->help().c_str(), NS_PARENT);
+        if (deprecatedBy().length() > 0)
+        {
+            xmqAddKeyValue(doc, info, "deprecated_by", deprecatedBy().c_str(), NS_PARENT);
+        }
+        // For Flags quantity fields (STATUS and INJECT_INTO_STATUS) list all the
+        // possible flag names. Only reported when non-empty.
+        if (this->xuantity() == Quantity::Flags)
+        {
+            auto fl = m->getFieldFlags(this);
+            if (fl.size() > 0)
+            {
+                auto rn_f = xmqAddElementWithAttrs(doc, info, "flags", NS_PARENT,
+                                                   XMQ_ATTRS( { "A", "" } ));
+                XMQNode *flags_array = rn_f.node;
+                for (string s : fl)
+                {
+                    xmqAddKeyValue(doc, flags_array, "", s.c_str(), NS_PARENT);
+                }
+            }
+        }
+    }
+}
+
 void MeterCommonImplementation::createMeterEnv(string id,
                                                vector<string> *envs,
                                                vector<string> *extra_constant_fields)
@@ -2353,18 +2867,24 @@ void MeterCommonImplementation::createMeterEnv(string id,
 
 void MeterCommonImplementation::printMeter(Telegram *t,
                                            string *human_readable,
-                                           string *fields, char separator,
-                                           string *json,
+                                           string *fields,
+                                           char separator,
                                            vector<string> *envs,
                                            vector<string> *extra_constant_fields,
                                            vector<string> *selected_fields,
-                                           bool pretty_print_json)
+                                           XMQDoc *doc)
 {
     bool first = !t->meter->hasReceivedFirstTelegram();
-
-   *human_readable = concatFields(this, t, '\t', field_infos_, true, selected_fields, extra_constant_fields);
-    *fields = concatFields(this, t, separator, field_infos_, false, selected_fields, extra_constant_fields);
-
+    string id = "";
+    if (t->addresses.size() > 0)
+    {
+        // Normally the id is just the number, but sometimes a meter
+        // needs to be discerned with the full mvt as well. The identity mode sets this.
+        // Only use the highest level id, at the end of the found addresses, this is
+        // makes us pick the tpl id over the dll id.
+        id = build_id(t->addresses.back(), identityMode());
+    }
+    // Now find the media for the highest level media type, pick tpl media over dll media.
     string media;
     if (driverInfo()->mediaType() != "")
     {
@@ -2383,119 +2903,17 @@ void MeterCommonImplementation::printMeter(Telegram *t,
         media = mediaTypeJSON(t->dll_type, t->dll_mfct);
     }
 
-    string id = "";
-    if (t->addresses.size() > 0)
-    {
-        id = build_id(t->addresses.back(), identityMode());
-    }
+    *human_readable = concatFields(this, t, '\t', field_infos_, true, selected_fields, extra_constant_fields);
+    *fields = concatFields(this, t, separator, field_infos_, false, selected_fields, extra_constant_fields);
 
-    string indent = "";
-    string newline = "";
-
-    if (pretty_print_json)
-    {
-        indent = "    ";
-        newline ="\n";
-    }
-
-    string s;
-    s += "{"+newline;
-    s += indent+"\"_\":\"telegram\","+newline;
-    s += indent+"\"media\":\""+media+"\","+newline;
-    s += indent+"\"meter\":\""+driverName().str()+"\","+newline;
-    s += indent+"\"name\":\""+name()+"\","+newline;
-    s += indent+"\"id\":\""+id+"\","+newline;
-
-    // Iterate over the meter field infos...
-    map<FieldInfo*,set<DVEntry*>> founds; // Multiple dventries can match to a single field info.
-    set<string> found_vnames;
-
-    for (auto &p : numeric_values_)
-    {
-        string vname = p.first.first;
-        NumericField& nf = p.second;
-        if (nf.field_info->printProperties().hasHIDE()) continue;
-
-        string out = nf.field_info->renderJson(this, &nf.dv_entry);
-        s += indent+out+","+newline;
-
-        if (first && getDetailedFirst())
-        {
-            size_t pos = out.find("\":");
-            if (pos != string::npos)
-            {
-                string rule = out.substr(0, pos)+"_field\":"+to_string(nf.field_info->index());
-                s += indent+rule+","+newline;
-            }
-        }
-    }
-
-    for (auto &p : string_values_)
-    {
-        string vname = p.first;
-        StringField& sf = p.second;
-        string out;
-
-        if (sf.field_info->printProperties().hasHIDE()) continue;
-        if (sf.field_info->printProperties().hasSTATUS())
-        {
-            string in = getStatusField(sf.field_info);
-            if (t->decoding_errors != "")
-            {
-                in = joinStatusOKStrings(in, t->decoding_errors);
-            }
-            out = tostrprintf("\"%s\":\"%s\"", vname.c_str(), in.c_str());
-            s += indent+out+","+newline;
-        }
-        else
-        {
-            if (sf.value == "null")
-            {
-                // The string "null" translates to actual json null.
-                out = tostrprintf("\"%s\":null", vname.c_str());
-                s += indent+out+","+newline;
-            }
-            else
-            {
-                out = tostrprintf("\"%s\":\"%s\"", vname.c_str(), sf.value.c_str());
-                s += indent+out+","+newline;
-            }
-        }
-        if (first && getDetailedFirst())
-        {
-            size_t pos = out.find("\":");
-            if (pos != string::npos)
-            {
-                string rule = out.substr(0, pos)+"_field\":"+to_string(sf.field_info->index());
-                s += indent+rule+","+newline;
-            }
-        }
-    }
-    s += indent+"\"timestamp\":\""+datetimeOfUpdateRobot()+"\"";
-
-    if (t->about.device != "")
-    {
-        s += ","+newline;
-        s += indent+"\"device\":\""+t->about.device+"\","+newline;
-        s += indent+"\"rssi_dbm\":"+to_string(t->about.rssi_dbm);
-    }
-    for (string extra_field : meterExtraConstantFields())
-    {
-        s += ","+newline;
-        s += indent+makeQuotedJson(extra_field);
-    }
-    for (string extra_field : *extra_constant_fields)
-    {
-        s += ","+newline;
-        s += indent+makeQuotedJson(extra_field);
-    }
-    s += newline;
-    s += "}";
-    *json = s;
+    buildOutputDoc(doc, id, media, t, field_infos_, extra_constant_fields, first);
 
     createMeterEnv(id, envs, extra_constant_fields);
 
-    envs->push_back(string("METER_JSON=")+*json);
+    string json = docToString(doc, XMQ_CONTENT_JSON, false);
+
+    envs->push_back(string("METER_JSON=")+json);
+    envs->push_back(string("METER_DRIVER=")+driverInfo()->getDynamicSource());
     envs->push_back(string("METER_MEDIA=")+media);
     envs->push_back(string("METER_TIMESTAMP=")+datetimeOfUpdateRobot());
     envs->push_back(string("METER_TIMESTAMP_UTC=")+datetimeOfUpdateRobot());
@@ -2509,7 +2927,7 @@ void MeterCommonImplementation::printMeter(Telegram *t,
         string display_unit_s = unitToStringUpperCase(fi.displayUnit());
         string var = fi.vname();
         std::transform(var.begin(), var.end(), var.begin(), ::toupper);
-        if (fi.xuantity() == Quantity::Text)
+        if (nonNumericQuantity(fi.xuantity()))
         {
             string envvar = "METER_"+var+"="+getStringValue(&fi);
             envs->push_back(envvar);
@@ -2821,7 +3239,7 @@ bool isValidKey(const string& key, MeterInfo &mi)
 
 void FieldInfo::performExtraction(Meter *m, Telegram *t, DVEntry *dve)
 {
-    if (xuantity_ == Quantity::Text)
+    if (nonNumericQuantity(xuantity_))
     {
         // Extract a string.
         extractString(m, t, dve);
@@ -2880,7 +3298,9 @@ string FieldInfo::str()
 
 void FieldInfo::useIXML(const string& ixml)
 {
-    XMQDoc *g = xmqNewDoc();
+    XMQReturnDoc rd = xmqNewDoc();
+    assert(rd.status == XMQ_OK);
+    XMQDoc *g = rd.doc;
     bool b = xmqParseBufferWithType(g, ixml.c_str(), NULL, NULL, XMQ_CONTENT_IXML, 0);
     if (!b) {
         warning("(field) field %s failed to parse ixml grammar:\n--------------\n %s\n--------------\n", vname().c_str(), ixml.c_str());
@@ -2930,7 +3350,9 @@ bool FieldInfo::extractNumeric(Meter *m, Telegram *t, DVEntry *dve)
 
     double extracted_double_value = NAN;
 
+    // Normally the vif describes the scale factor (Auto). This can be disabled (None).
     bool auto_vif_scaling = vifScaling() == VifScaling::Auto;
+    // Normally the data value is signed (Signed) but this can be override (Unsigned).
     bool force_unsigned = difSignedness() == DifSignedness::Unsigned;
 
     if (dve->extractDouble(&extracted_double_value, auto_vif_scaling, force_unsigned))
@@ -2939,17 +3361,28 @@ bool FieldInfo::extractNumeric(Meter *m, Telegram *t, DVEntry *dve)
         if (matcher_.vif_range == VIFRange::DateTime)
         {
             struct tm datetime;
-            dve->extractDate(&datetime);
-            time_t tmp = mktime(&datetime);
-            string bbb = strdatetime(tmp);
-            extracted_double_value = tmp;
+            if (dve->extractDate(&datetime))
+            {
+                time_t tmp = mktime(&datetime);
+                extracted_double_value = tmp;
+            }
+            else
+            {
+                extracted_double_value = NAN;
+            }
         }
         else if (matcher_.vif_range == VIFRange::Date)
         {
             struct tm date;
-            dve->extractDate(&date);
-            time_t tmp = mktime(&date);
-            extracted_double_value = tmp;
+            if (dve->extractDate(&date))
+            {
+                time_t tmp = mktime(&date);
+                extracted_double_value = tmp;
+            }
+            else
+            {
+                extracted_double_value = NAN;
+            }
         }
         else if (matcher_.vif_range == VIFRange::AnyEnergyVIF ||
                  matcher_.vif_range == VIFRange::AnyVolumeVIF ||
@@ -2963,6 +3396,14 @@ bool FieldInfo::extractNumeric(Meter *m, Telegram *t, DVEntry *dve)
         {
             // Pick the default unit for this range.
             decoded_unit = toDefaultUnit(matcher_.vif_range);
+        }
+
+        // Normally the vif unit is used. But for mfct specific vifs, we can override/force the vif unit.
+        Unit override_vif_unit = overrideVifUnit();
+
+        if (override_vif_unit != Unit::Unknown)
+        {
+            decoded_unit = override_vif_unit;
         }
 
         debug("(meter) %s %s decoded %s default %s value %g (scale %g)\n",
@@ -3095,6 +3536,7 @@ bool FieldInfo::extractString(Meter *m, Telegram *t, DVEntry *dve)
         if (lookup_.hasLookups() && dve->extractLong(&extracted_bits))
         {
             translated_bits = lookup().translate(extracted_bits);
+            m->setFieldBits(this, extracted_bits, dve);
             found = true;
         }
 
@@ -3112,17 +3554,22 @@ bool FieldInfo::extractString(Meter *m, Telegram *t, DVEntry *dve)
     else if (matcher_.vif_range == VIFRange::DateTime)
     {
         struct tm datetime;
-        dve->extractDate(&datetime);
         string extracted_device_date_time;
-
-        if (dve->value.size() == 12)
+        if (dve->extractDate(&datetime))
         {
-            // A long date time sec + timezone field. TODO add timezone data.
-            extracted_device_date_time = strdatetimesec(&datetime);
+            if (dve->value.size() == 12)
+            {
+                // A long date time sec + timezone field. TODO add timezone data.
+                extracted_device_date_time = strdatetimesec(&datetime);
+            }
+            else
+            {
+                extracted_device_date_time = strdatetime(&datetime);
+            }
         }
         else
         {
-            extracted_device_date_time = strdatetime(&datetime);
+            extracted_device_date_time = "";
         }
         m->setStringValue(this, extracted_device_date_time, dve);
         t->addMoreExplanation(dve->offset, renderJsonText(m, dve));
@@ -3131,8 +3578,15 @@ bool FieldInfo::extractString(Meter *m, Telegram *t, DVEntry *dve)
     else if (matcher_.vif_range == VIFRange::Date)
     {
         struct tm date;
-        dve->extractDate(&date);
-        string extracted_device_date = strdate(&date);
+        string extracted_device_date;
+        if (dve->extractDate(&date))
+        {
+            extracted_device_date = strdate(&date);
+        }
+        else
+        {
+            extracted_device_date = "";
+        }
         m->setStringValue(this, extracted_device_date, dve);
         t->addMoreExplanation(dve->offset, renderJsonText(m, dve));
         found = true;
@@ -3173,597 +3627,6 @@ bool FieldInfo::extractString(Meter *m, Telegram *t, DVEntry *dve)
         found = true;
     }
     return found;
-}
-
-bool checkIf(set<string> &fields, const char *s)
-{
-    if (fields.count(s) > 0)
-    {
-        fields.erase(s);
-        return true;
-    }
-
-    return false;
-}
-
-bool checkFieldsEmpty(set<string> &fields, string driver_name)
-{
-    if (fields.size() > 0)
-    {
-        string info;
-        for (auto &s : fields) { info += s+" "; }
-
-        warning("(meter) when adding common fields to driver %s, these fields were not found: %s\n",
-                driver_name.c_str(),
-                info.c_str());
-        return false;
-    }
-    return true;
-}
-
-bool MeterCommonImplementation::addOptionalLibraryFields(string field_names)
-{
-    // Old C++ driver passes fields like: "target_date,target_volume_m3"
-    // New xmq driver passes single field like: "target_date|Special help for target date."
-    // or just: "target_date"
-
-    set<string> fields = splitStringIntoSet(field_names, ',');
-    string help;
-    vector<string> helps = splitString(field_names, '|');
-    if (helps.size() == 2)
-    {
-        fields.clear();
-        fields.insert(helps[0]);
-        help = " "+helps[1];
-    }
-    if (helps.size() > 2)
-    {
-        error(EXIT_DRIVER_ERROR, "Bad library field, only zero or one pipe | symbol is allowed: %s", field_names.c_str());
-    }
-
-    if (checkIf(fields,"status-tpl-only"))
-    {
-        addStringField(
-            "status",
-            "Status and error flags."+help,
-            STATUS | INCLUDE_TPL_STATUS);
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields, "actuality_duration_s"))
-    {
-        addNumericFieldWithExtractor(
-            "actuality_duration",
-            "Lapsed time between measurement and transmission."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Time,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::ActualityDuration),
-            Unit::Second
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields, "actuality_duration_h"))
-    {
-        addNumericFieldWithExtractor(
-            "actuality_duration",
-            "Lapsed time between measurement and transmission."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Time,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::ActualityDuration)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields, "battery_v"))
-    {
-        addNumericFieldWithExtractor(
-            "battery",
-            "Battery voltage."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Voltage,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::Voltage)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields, "fabrication_no"))
-    {
-        addStringFieldWithExtractor(
-            "fabrication_no",
-            "Fabrication number."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::FabricationNo)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"enhanced_id"))
-    {
-        addStringFieldWithExtractor(
-            "enhanced_id",
-            "Enhanced identification number."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::EnhancedIdentification)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"software_version"))
-    {
-        addStringFieldWithExtractor(
-            "software_version",
-            "Software version."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::SoftwareVersion)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"manufacturer"))
-    {
-        addStringFieldWithExtractor(
-            "manufacturer",
-            "Meter manufacturer."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::Manufacturer)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"model_version"))
-    {
-        addStringFieldWithExtractor(
-            "model_version",
-            "Meter model version."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::ModelVersion)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"firmware_version"))
-    {
-        addStringFieldWithExtractor(
-            "firmware_version",
-            "Meter firmware version."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::FirmwareVersion)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"parameter_set"))
-    {
-        addStringFieldWithExtractor(
-            "parameter_set",
-            "Parameter set for this meter."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::ParameterSet)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"customer"))
-    {
-        addStringFieldWithExtractor(
-            "customer",
-            "Customer name."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::Customer)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"location"))
-    {
-        addStringFieldWithExtractor(
-            "location",
-            "Meter installed at this customer location."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::Location)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"operating_time_h"))
-    {
-        addNumericFieldWithExtractor(
-            "operating_time",
-            "How long the meter has been collecting data."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Time,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::OperatingTime)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"on_time_h"))
-    {
-        addNumericFieldWithExtractor(
-            "on_time",
-            "How long the meter has been powered up."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Time,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::OnTime)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"on_time_at_error_h"))
-    {
-        addNumericFieldWithExtractor(
-            "on_time_at_error",
-            "How long the meter has been in an error state while powered up."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Time,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::AtError)
-            .set(VIFRange::OnTime)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"meter_date"))
-    {
-        addStringFieldWithExtractor(
-            "meter_date",
-            "Date when the meter sent the telegram."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::Date)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"meter_date_at_error"))
-    {
-        addStringFieldWithExtractor(
-            "meter_date_at_error",
-            "Date when the meter was in error."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::AtError)
-            .set(VIFRange::Date)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"meter_datetime"))
-    {
-        addStringFieldWithExtractor(
-            "meter_datetime",
-            "Date and time when the meter sent the telegram."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::DateTime)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"meter_datetime_at_error"))
-    {
-        addStringFieldWithExtractor(
-            "meter_datetime_at_error",
-            "Date and time when the meter was in error."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            FieldMatcher::build()
-            .set(MeasurementType::AtError)
-            .set(VIFRange::DateTime)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"total_m3"))
-    {
-        addNumericFieldWithExtractor(
-            "total",
-            "The total media volume consumption recorded by this meter."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Volume,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::Volume)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"target_m3"))
-    {
-        addNumericFieldWithExtractor(
-            "target",
-            "The volume recorded by this meter at the target date."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Volume,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::Volume)
-            .set(StorageNr(1))
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"total_kwh"))
-    {
-        addNumericFieldWithExtractor(
-            "total",
-            "The total energy consumption recorded by this meter."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Energy,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::AnyEnergyVIF)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"target_kwh"))
-    {
-        addNumericFieldWithExtractor(
-            "target",
-            "The energy recorded by this meter at the target date."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Energy,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::AnyEnergyVIF)
-            .set(StorageNr(1))
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"target_date"))
-    {
-        addNumericFieldWithExtractor(
-            "target",
-            "The target date. Usually the end of the previous billing period."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::PointInTime,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::Date)
-            .set(StorageNr(1)),
-            Unit::DateLT
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"total_forward_m3"))
-    {
-        addNumericFieldWithExtractor(
-            "total_forward",
-            "The total media volume flowing forward."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Volume,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::Volume)
-            .add(VIFCombinable::ForwardFlow)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"total_backward_m3"))
-    {
-        addNumericFieldWithExtractor(
-            "total_backward",
-            "The total media volume flowing backward."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Volume,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::Volume)
-            .add(VIFCombinable::BackwardFlow)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"flow_temperature_c"))
-    {
-        addNumericFieldWithExtractor(
-            "flow_temperature",
-            "Forward media temperature."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Temperature,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::FlowTemperature)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"external_temperature_c"))
-    {
-        addNumericFieldWithExtractor(
-            "external_temperature",
-            "Temperature outside of meter."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Temperature,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::ExternalTemperature)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"return_temperature_c"))
-    {
-        addNumericFieldWithExtractor(
-            "return_temperature",
-            "Return media temperature.",
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Temperature,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::ReturnTemperature)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"flow_return_temperature_difference_c"))
-    {
-        addNumericFieldWithExtractor(
-            "flow_return_temperature_difference",
-            "The difference between flow and return media temperatures."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Temperature,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::TemperatureDifference)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"volume_flow_m3h"))
-    {
-        addNumericFieldWithExtractor(
-            "volume_flow",
-            "Media volume flow."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Flow,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::VolumeFlow)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"access_counter"))
-    {
-        addNumericFieldWithExtractor(
-            "access",
-            "Meter access counter."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::Dimensionless,
-            VifScaling::None,
-            DifSignedness::Unsigned,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::AccessNumber)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"consumption_hca"))
-    {
-        addNumericFieldWithExtractor(
-            "consumption",
-            "The current heat cost allocation for this meter."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::HCA,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::HeatCostAllocation)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"consumption_hca"))
-    {
-        addNumericFieldWithExtractor(
-            "consumption",
-            "The current heat cost allocation for this meter."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::HCA,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::HeatCostAllocation)
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (checkIf(fields,"target_hca"))
-    {
-        addNumericFieldWithExtractor(
-            "target",
-            "The heat cost allocation recorded by this meter at the target date."+help,
-            DEFAULT_PRINT_PROPERTIES,
-            Quantity::HCA,
-            VifScaling::Auto,
-            DifSignedness::Signed,
-            FieldMatcher::build()
-            .set(MeasurementType::Instantaneous)
-            .set(VIFRange::HeatCostAllocation)
-            .set(StorageNr(1))
-            );
-        markLastFieldAsLibrary();
-    }
-
-    if (!checkFieldsEmpty(fields, name()))
-    {
-        return false;
-    }
-    return true;
 }
 
 const char *toString(VifScaling s)
@@ -3811,7 +3674,6 @@ const char* toString(PrintProperty p)
     switch(p)
     {
     case PrintProperty::REQUIRED: return "REQUIRED";
-    case PrintProperty::DEPRECATED: return "DEPRECATED";
     case PrintProperty::STATUS: return "STATUS";
     case PrintProperty::INCLUDE_TPL_STATUS: return "INCLUDE_TPL_STATUS";
     case PrintProperty::INJECT_INTO_STATUS: return "INJECT_INTO_STATUS";
@@ -3825,7 +3687,6 @@ const char* toString(PrintProperty p)
 PrintProperty toPrintProperty(const char *s)
 {
     if (!strcmp(s, "REQUIRED")) return PrintProperty::REQUIRED;
-    if (!strcmp(s, "DEPRECATED")) return PrintProperty::DEPRECATED;
     if (!strcmp(s, "STATUS")) return PrintProperty::STATUS;
     if (!strcmp(s, "INCLUDE_TPL_STATUS")) return PrintProperty::INCLUDE_TPL_STATUS;
     if (!strcmp(s, "INJECT_INTO_STATUS")) return PrintProperty::INJECT_INTO_STATUS;
@@ -3854,7 +3715,7 @@ const char *availableMeterTypes()
 {
     if (available_meter_types_[0]) return available_meter_types_;
 
-#define X(m) if (MeterType::m != MeterType::AutoMeter && MeterType::m != MeterType::UnknownMeter) {  \
+#define X(m,desc) if (MeterType::m != MeterType::AutoMeter && MeterType::m != MeterType::UnknownMeter) { \
         strcat(available_meter_types_, #m); strcat(available_meter_types_, "\n"); \
         assert(strlen(available_meter_types_) < 1024); }
 LIST_OF_METER_TYPES
@@ -3873,4 +3734,15 @@ void MeterCommonImplementation::setMeterManager(MeterManager *mm)
 MeterManager *MeterCommonImplementation::meterManager()
 {
     return meter_manager_;
+}
+
+vector<string> DriverInfo::sortedFlags()
+{
+    std::vector<std::string> sorted_flags;
+    for (auto &p : flags_)
+    {
+        sorted_flags.push_back(p.first);
+    }
+    sort(sorted_flags.begin(), sorted_flags.end());
+    return sorted_flags;
 }

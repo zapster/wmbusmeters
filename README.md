@@ -150,10 +150,10 @@ To have the wmbusmeters daemon start automatically when the computer boots do:
 You can trigger a reload of the config files with `sudo killall -HUP wmbusmetersd`
 
 (Note! make install only works for GNU/Linux. For MacOSX try to start
-`wmbusmetersd /tmp/thepidfile` from a script instead.)
+`wmbusmetersd /path/to/thepidfile` from a script instead.)
 
 You can also start the daemon with another set of config files:
-`wmbusmetersd --useconfig=/home/me/.config/wmbusmeters /tmp/thepidfile`
+`wmbusmetersd --useconfig=/home/me/.config/wmbusmeters /path/to/thepidfile`
 
 When using useconfig, the files/dir should be:
 `/home/me/.config/wmbusmeters/wmbusmeters.conf` and the meters dir:
@@ -474,7 +474,7 @@ depending on if you are running as a daemon or not.
 # Running without config files, good for experimentation and test.
 
 ```
-wmbusmeters version: 3.0.0
+wmbusmeters version: 3.1.0
 Usage: wmbusmeters {options} [device] { [meter_name] [meter_driver] [meter_id] [meter_key] }*
        wmbusmeters {options} [hex]    { [meter_name] [meter_driver] [meter_id] [meter_key] }*
        wmbusmetersd {options} [pid_file]
@@ -502,7 +502,7 @@ As {options} you can use:
     --ignoreduplicates=<bool> ignore duplicate telegrams, remember the last 10 telegrams
     --field_xxx=yyy always add "xxx"="yyy" to the json output and add shell env METER_xxx=yyy (--json_xxx=yyy also works)
     --license print GPLv3+ license
-    --listento=<mode> listen to one of the c1,t1,s1,s1m,n1a-n1f link modes
+    --listento=<mode> listen to one of the c1,t1,s1,s1m,n1a-n1f link modes, or cct for iU891A Custom C/T mode
     --listento=<mode>,<mode> listen to more than one link mode at the same time, assuming the dongle supports it
     --listenvs=<meter_driver> list the env variables available for the given meter driver
     --listfields=<meter_driver> list the fields selectable for the given meter driver
@@ -525,6 +525,9 @@ As {options} you can use:
     --overridedevice=<device> override device in config files. Use only in combination with --useconfig= option
     --ppjson pretty print the json
     --pollinterval=<time> time between polling of meters, must be set to get polling.
+    --rawshell=<cmdline> invokes cmdline for every received telegram, also from unconfigured meters,
+                         with env variables TELEGRAM_ID, TELEGRAM_HEX (as received, not decrypted),
+                         TELEGRAM_DEVICE and TELEGRAM_RSSI_DBM
     --resetafter=<time> reset the wmbus dongle regularly, default is 23h
     --selectfields=id,timestamp,total_m3 select only these fields to be printed (--listfields=<meter> to list available fields)
     --separator=<c> change field separator to c
@@ -732,7 +735,7 @@ Supported electricity meters:
 Easy Meter ESYS-WM20 (esyswm)
 eBZ wMB-E01 (ebzwmbe)
 EMH Metering (ehzp)
-Tauron Amiplus (amiplus) (includes vendor apator and echelon)
+Tauron Amiplus (amiplus) (includes vendors apator, echelon and elgama gama 350)
 Gavazzi EM24 (em24)
 Gransystems 301 and 303 (gransystems)
 Kamstrup Omnipower (omnipower)
@@ -899,7 +902,7 @@ You can use `--debug` to get both verbose output and the actual data bytes sent 
 If the meter does not use encryption of its meter data, then enter NOKEY on the command line.
 
 ```shell
-wmbusmeters --format=json --meterfiles /dev/ttyUSB0:im871a:c1 MyTapWater multical21:c1 12345678 NOKEY
+wmbusmeters --format=json --meterfiles=/home/me/meter_readings /dev/ttyUSB0:im871a:c1 MyTapWater multical21:c1 12345678 NOKEY
 ```
 
 # Using wmbusmeters in a pipe
@@ -1146,3 +1149,10 @@ https://oms-group.org/
 There is also a lot of wmbus protocol implementation details that
 are missing. They will be added to the program as we figure out
 how the meters send their data.
+
+## Documentation
+
+Architecture decisions are recorded in
+[docs/adr/](docs/adr/0001-architecture-decision-records.md) and
+mermaid views of the current architecture live in
+[docs/architecture/](docs/architecture/README.md).

@@ -12,7 +12,7 @@ cp src/*.xmq ../build/web
 echo -n "Generating html for xmq files"
 for i in src/*
 do
-    XMQ_BG=light XMQ_THEME="BG=#ffffff" xmq $i render-html > ../build/web/$(basename $i).html
+    XMQ_BG=dark xmq $i render-html > ../build/web/$(basename $i).html
     echo -n "."
 done
 echo "done."
@@ -64,8 +64,14 @@ echo "body {" >> $OUT
 
 echo "h2='wmbusmeters drivers $DATE'" >> $OUT
 
+echo -n "Generating library.html"
+XMQ_BG=dark xmq library.xmq render-html > ../build/web/library.xmq.html
+echo "a(href=library.xmq.html)=library.xmq" >> $OUT
+echo br  >> $OUT
+echo "done."
+
 echo -n "Generating index.html"
-for i in $(ls ../build/web/*xmq.html | sort)
+for i in $(ls ../build/web/*xmq.html | grep -v library.xmq.html | sort)
 do
     HREF=$(basename $i)
     NAME=${HREF%%.*}

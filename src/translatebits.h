@@ -19,6 +19,7 @@
 #define TRANSLATEBITS_H
 
 #include<cstdint>
+#include<map>
 #include<string>
 #include<vector>
 
@@ -50,6 +51,7 @@ struct MaskBits
     MaskBits() : bits_(0) {}
     MaskBits(uint64_t b) : bits_(b) {}
     int intValue() { return bits_; }
+    uint64_t value() const { return bits_; }
     bool operator==(const MaskBits &tb) const { return bits_ == tb.bits_; }
     bool operator!=(const MaskBits &tb) const { return bits_ != tb.bits_; }
 
@@ -58,6 +60,20 @@ private:
 };
 
 extern MaskBits AutoMask;
+
+struct PreShiftRight
+{
+    PreShiftRight() : shift_(0) {}
+    PreShiftRight(int s) : shift_(s) {}
+    int intValue() const { return shift_; }
+    bool operator==(const PreShiftRight &p) const { return shift_ == p.shift_; }
+    bool operator!=(const PreShiftRight &p) const { return shift_ != p.shift_; }
+
+private:
+    int shift_;
+};
+
+extern PreShiftRight NoPreShift;
 
 struct DefaultMessage
 {
@@ -97,16 +113,22 @@ namespace Translate
         MapType type;
         TriggerBits trigger; // Bits that must be set.
         MaskBits mask; // Bits to be used are set as 1.
+        PreShiftRight pre_shift_right; // Shift the input bits right by this much before masking/matching.
         DefaultMessage default_message; // If no bits are set print this, typically "OK" or "".
         std::vector<Map> map;
+        // If true, synthesize a RESERVED_BIT_<n> map entry (test=Set) for every bit set in
+        // mask that no other map entry already covers. Only applies to BitToString rules
+        // with an explicit (non-Auto) mask; no-op otherwise.
+        bool mark_reserved_bits {};
 
         Rule() {};
         Rule(std::string n, MapType t, TriggerBits tr, MaskBits mb, std::string dm, std::vector<Map> m)
-            : name(n), type(t), trigger(tr), mask(mb), default_message(dm), map(m) {}
+            : name(n), type(t), trigger(tr), mask(mb), pre_shift_right(NoPreShift), default_message(dm), map(m) {}
         Rule(std::string n, MapType t) :
-            name(n), type(t), trigger(AlwaysTrigger), mask(AutoMask), default_message(DefaultMessage("")) {}
+            name(n), type(t), trigger(AlwaysTrigger), mask(AutoMask), pre_shift_right(NoPreShift), default_message(DefaultMessage("")) {}
         Rule &set(TriggerBits t) { trigger = t; return *this; }
         Rule &set(MaskBits m) { mask = m; return *this; }
+        Rule &set(PreShiftRight p) { pre_shift_right = p; return *this; }
         Rule &set(DefaultMessage m) { default_message = m; return *this; }
         Rule &add(Map m) { map.push_back(m); return *this; }
     };
@@ -116,6 +138,16 @@ namespace Translate
         std::vector<Rule> rules;
 
         std::string translate(uint64_t bits);
+        std::map<std::string,bool> translateToObject(uint64_t bits);
+        // For each (trigger-active) BitToString rule, reports the bits set in the
+        // input that are not covered by any map entry of that rule (0 when every
+        // set bit is mapped). Every active rule is included in the returned map.
+        // All the bits referenced by any map entry (Set or NotSet) across all rules.
+        // These are the "known" bits; input bits set but not in this mask have no flag name.
+        uint64_t coveredBits() const;
+        std::map<std::string,uint64_t> unknownBits(uint64_t bits) const;
+        // Returns the names of all flags (map "to" strings) of all rules, in order.
+        std::vector<std::string> flagNames() const;
         bool hasLookups() { return rules.size() > 0; }
         // Returns true if the lookup covers more than just the vendor-specific bits 5-7 (0xe0),
         // i.e. the mask also includes standard bits 0-4.

@@ -17,9 +17,25 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
-SOCKET_PATH = "/tmp/test_wmbusmeters_py.sock"
+# ANSI colors matching printOK/printERROR in tests/include.sh
+GREEN = "\033[37;1;42m"
+RED = "\033[31;1;41m"
+NC = "\033[0m"
+
+
+def print_ok(msg):
+    print("%s OK %s %s" % (GREEN, NC, msg))
+
+
+def print_error(msg):
+    print("%s ERROR %s %s" % (RED, NC, msg))
+
+# these are set in main()
+SOCKET_DIR = None
+SOCKET_PATH = None
 
 # --- Test cases: (description, request, expected_checks) ---
 # expected_checks is a dict of JSON field -> expected value (or a callable for custom checks)
@@ -34,7 +50,7 @@ TEST_CASES = [
             "key": "28F64A24988064A079AA2C807D6102AE",
         },
         {
-            "meter": "kamwater",
+            "driver": "kamwater",
             "id": "76348799",
             "media": "cold water",
             "total_m3": 6.408,
@@ -63,7 +79,7 @@ TEST_CASES = [
             "telegram": "234433300602010014007a8e0000002f2f0efd3a1147000000008e40fd3a341200000000",
         },
         {
-            "meter": "lansenpu",
+            "driver": "lansenpu",
             "id": "00010206",
             "media": "other",
             "a_counter": 4711,
@@ -78,7 +94,7 @@ TEST_CASES = [
             "telegram": "A244EE4D785634123C067A8F0000000C1348550000426CE1F14C130000000082046C21298C0413330000008D04931E3A3CFE3300000033000000330000003300000033000000330000003300000033000000330000003300000033000000330000004300000034180000046D0D0B5C2B03FD6C5E150082206C5C290BFD0F0200018C4079678885238310FD3100000082106C01018110FD610002FD66020002FD170000",
         },
         {
-            "meter": "supercom587",
+            "driver": "supercom587",
             "id": "12345678",
             "media": "warm water",
             "total_m3": 5.548,
@@ -92,7 +108,7 @@ TEST_CASES = [
             "telegram": "68383868080072840200102941011B0D0000000265FE0842653009820165E70802FB1A480142FB1A45018201FB1A4E010C788402001002FD0F21000F0316",
         },
         {
-            "meter": "piigth",
+            "driver": "piigth",
             "id": "10000284",
             "media": "room sensor",
             "temperature_c": 23.02,
@@ -109,7 +125,7 @@ TEST_CASES = [
             "driver": "multical21",
         },
         {
-            "meter": "kamwater",
+            "driver": "kamwater",
             "id": "76348799",
             "total_m3": 6.408,
         },
@@ -145,7 +161,7 @@ TEST_CASES = [
             "format": "mbus",
         },
         {
-            "meter": "piigth",
+            "driver": "piigth",
             "id": "10000284",
             "temperature_c": 23.02,
         },
@@ -160,7 +176,7 @@ TEST_CASES = [
             "format": "wmbus",
         },
         {
-            "meter": "kamwater",
+            "driver": "kamwater",
             "id": "76348799",
             "total_m3": 6.408,
         },
@@ -214,7 +230,7 @@ def start_wmbusmeters(binary):
     # If we get here, something went wrong
     proc.kill()
     stdout, _ = proc.communicate(timeout=5)
-    print("FAIL: wmbusmeters did not create socket within 5 seconds")
+    print_error("wmbusmeters did not create socket within 5 seconds")
     print("Output:", stdout.decode(errors="replace"))
     sys.exit(1)
 
@@ -300,11 +316,16 @@ def check_response(description, response, expected_checks):
 
 
 def main():
+    global SOCKET_DIR, SOCKET_PATH
+
     binary = sys.argv[1] if len(sys.argv) > 1 else "build/wmbusmeters.g"
 
     if not os.path.isfile(binary):
         print("ERROR: binary not found: %s" % binary)
         sys.exit(1)
+
+    SOCKET_DIR = tempfile.mkdtemp(prefix="wmbusmeters-test-socket-")
+    SOCKET_PATH = os.path.join(SOCKET_DIR, "wmbusmeters.sock")
 
     print("Using binary: %s" % binary)
     print("Socket path:  %s" % SOCKET_PATH)
@@ -323,16 +344,15 @@ def main():
             response = send_request(request)
             ok, msg = check_response(description, response, expected_checks)
             if ok:
-                print("  OK: %s" % description)
+                print_ok("%s" % description)
                 passed += 1
             else:
-                print("FAIL: %s" % description)
+                print_error("%s - %s" % (description, msg))
                 print("      %s" % msg)
                 print("      response: %s" % json.dumps(response, indent=None))
                 failed += 1
         except Exception as e:
-            print("FAIL: %s" % description)
-            print("      exception: %s" % e)
+            print_error("%s - exception: %s" % (description, e))
             failed += 1
 
     # --- Multi-request on single connection test ---
@@ -352,7 +372,7 @@ def main():
 
         responses = send_multiple_requests(multi_requests)
         if len(responses) != 3:
-            print("FAIL: expected 3 responses, got %d" % len(responses))
+            print_error("expected 3 responses, got %d" % len(responses))
             failed += 1
         else:
             all_ok = True
@@ -360,15 +380,15 @@ def main():
                 desc = "multi[%d]" % i
                 ok, msg = check_response(desc, resp, exp)
                 if not ok:
-                    print("FAIL: %s - %s" % (desc, msg))
+                    print_error("%s - %s" % (desc, msg))
                     all_ok = False
             if all_ok:
-                print("  OK: 3 telegrams decoded on single connection")
+                print_ok("3 telegrams decoded on single connection")
                 passed += 1
             else:
                 failed += 1
     except Exception as e:
-        print("FAIL: multi-request test: %s" % e)
+        print_error("multi-request test: %s" % e)
         failed += 1
 
     # --- Reconnection test ---
@@ -387,13 +407,13 @@ def main():
         ok2, _ = check_response("reconnect-2", r2, TEST_CASES[2][2])
 
         if ok1 and ok2:
-            print("  OK: reconnection works")
+            print_ok("reconnection works")
             passed += 1
         else:
-            print("FAIL: reconnection failed")
+            print_error("reconnection failed")
             failed += 1
     except Exception as e:
-        print("FAIL: reconnection test: %s" % e)
+        print_error("reconnection test: %s" % e)
         failed += 1
 
     # --- Summary ---
@@ -410,6 +430,8 @@ def main():
         proc.wait()
     if os.path.exists(SOCKET_PATH):
         os.unlink(SOCKET_PATH)
+    if SOCKET_DIR and os.path.isdir(SOCKET_DIR):
+        os.rmdir(SOCKET_DIR)
 
     sys.exit(0 if failed == 0 else 1)
 
