@@ -16,10 +16,9 @@
 > This branch is kept for verification/reference purposes.
 >
 > **Patched add-on versioning:** `.github/workflows/trigger_patched_ha_addon.yml` derives the add-on
-> version from `version_base` and `first_run_number`. When updating this branch to a new upstream
-> release, update both: set the base to that release and the first run number to the next Actions
-> run, so its first suffix is `-1` and later runs increment it. A manually supplied workflow version
-> overrides the generated version.
+> version from `version_base` and the Actions run number. When updating this branch to a new upstream
+> release, update `version_base` to that release; the run-number suffix keeps builds unique. A
+> manually supplied workflow version overrides the generated version.
 
 # wmbusmeters
 
