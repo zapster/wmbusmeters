@@ -14,6 +14,12 @@
 > **2026-06-24 update:** After testing with upstream 3.0.0, the issue described below does **not**
 > reproduce on the unpatched code — the `AnyEnergyVIF` match works correctly with our meter.
 > This branch is kept for verification/reference purposes.
+>
+> **Patched add-on versioning:** `.github/workflows/trigger_patched_ha_addon.yml` derives the add-on
+> version from `version_base` and `first_run_number`. When updating this branch to a new upstream
+> release, update both: set the base to that release and the first run number to the next Actions
+> run, so its first suffix is `-1` and later runs increment it. A manually supplied workflow version
+> overrides the generated version.
 
 # wmbusmeters
 

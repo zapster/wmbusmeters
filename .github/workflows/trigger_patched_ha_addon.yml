@@ -25,7 +25,11 @@ jobs:
         run: |
           version="${INPUT_VERSION:-}"
           if [ -z "$version" ]; then
-            version="3.0.0-$((GITHUB_RUN_NUMBER + 1))"
+            # Run #7 produced 3.0.0-8; start upstream 3.1.0 at suffix 1 on run #8.
+            # When updating upstream, bump both the base version and first run number.
+            version_base="3.1.0"
+            first_run_number=8
+            version="${version_base}-$((GITHUB_RUN_NUMBER - first_run_number + 1))"
           fi
           {
             echo "version=$version"
