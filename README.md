@@ -1,24 +1,3 @@
-> [!NOTE]
-> This branch is a temporary AMI+ patch fork of upstream `wmbusmeters/wmbusmeters`.
->
-> Compared to upstream, it tightens AMI+ decoding for the LINZ NETZ smart meter telegrams tested here:
->
-> - `total_energy_consumption_kwh` is matched to OBIS `1.8.0` / DIF-VIF `0E03`.
-> - `current_power_consumption_kw` is matched to OBIS `1.7.0` / DIF-VIF `0B2B`.
-> - pushes to this branch trigger the patched Home Assistant add-on fork.
->
-> Related add-on fork: https://github.com/zapster/wmbusmeters-ha-addon
->
-> LINZ NETZ reference document: https://www.linznetz.at/media/linz_netz_website/netz_dokumente/Beschreibung-Wireless_M-Bus-Schnittstelle.pdf
->
-> **2026-06-24 update:** After testing with upstream 3.0.0, the issue described below does **not**
-> reproduce on the unpatched code — the `AnyEnergyVIF` match works correctly with our meter.
-> This branch is kept for verification/reference purposes.
->
-> **Patched add-on versioning:** `.github/workflows/trigger_patched_ha_addon.yml` derives the add-on
-> version from `version_base` and the Actions run number. When updating this branch to a new upstream
-> release, update `version_base` to that release; the run-number suffix keeps builds unique. A
-> manually supplied workflow version overrides the generated version.
 
 # wmbusmeters
 
@@ -479,7 +458,7 @@ depending on if you are running as a daemon or not.
 # Running without config files, good for experimentation and test.
 
 ```
-wmbusmeters version: 3.1.0
+wmbusmeters version: 3.1.1
 Usage: wmbusmeters {options} [device] { [meter_name] [meter_driver] [meter_id] [meter_key] }*
        wmbusmeters {options} [hex]    { [meter_name] [meter_driver] [meter_id] [meter_key] }*
        wmbusmetersd {options} [pid_file]
@@ -1051,6 +1030,20 @@ environment to force LLVM to be used.
 
 Binary generated: `./build_arm_debug/wmbusmeters`
 
+# How to run fuzzing
+
+```
+make build_fuzz
+make run_fuzz_telegrams
+or
+make run_fuzz_difvifparser
+```
+
+```
+make build_fuzz_clang
+build_debug/fuzztelegram fuzz_testcases/telegrams_clang
+```
+
 # System configuration
 
 `make install` installs the files:
@@ -1115,37 +1108,6 @@ and then rebuild from the wmbusmeters directory `make`. The new driver is now
 compiled into the binary.
 
 You can also put the new driver file bbb.xmq into /etc/wmbusmeters.drivers.d and it will immediately be available to the wmbusmeters program without recompiling.
-
-# Common issues with AnyVIFRange match types
-
-The `vif_range = AnyEnergyVIF` (and similarly `AnyPowerVIF`, `AnyVolumeVIF`) matchers
-bind to **any** VIF code within the corresponding unit family. For electricity meters
-this means `AnyEnergyVIF` matches Energy Wh, Energy MJ, Energy MWh, and Energy GJ
-indiscriminately.
-
-**Problem:** When a telegram contains multiple energy-coded fields (e.g., `0E 03`
-for Energy Wh and `07 00` for Energy mWh in the same payload), `AnyEnergyVIF`
-may match the **first** energy VIF it encounters in the telegram instead of the
-intended one. Depending on the driver implementation this can produce either:
-
-- A `null` value (the value from the wrong field is discarded)
-- A wrong value with incorrect scaling if the wrong field is captured
-
-**Fix:** Replace `AnyEnergyVIF` with an exact `difvifkey` match that targets only
-the specific DIF/VIF combination used by the meter. For example, the DEV/amiplus
-meter uses `0E 03` (12-digit BCD, VIF=Energy Wh at 1 Wh resolution) for its
-total energy consumption field:
-
-```xmq
-match {
-    difvifkey = 0E03
-}
-```
-
-This also avoids `dif_signedness = Signed` mismatches — the `0E` DIF implies a
-12-digit BCD value which has inherent sign handling, whereas `07 00` uses a
-64-bit signed integer. Always verify the correct DIF/VIF key with
-`--analyze=<key>` on a real telegram from the meter.
 
 # Good free documents on the wireless mbus protocol standard EN 13757
 

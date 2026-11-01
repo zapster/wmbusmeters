@@ -65,6 +65,7 @@ quantity_c()
         Dimensionless) echo "Quantity::Dimensionless" ;;
         HCA)          echo "Quantity::HCA" ;;
         Text)         echo "Quantity::Text" ;;
+        Power)        echo "Quantity::Power" ;;
         Flags)        echo "Quantity::Flags" ;;
         "")           echo "Quantity::Text" ;;
         *)            die "unknown quantity: $1" ;;
@@ -79,6 +80,7 @@ unit_c()
         y)        echo "Unit::Year" ;;
         date)     echo "Unit::DateLT" ;;
         datetime) echo "Unit::DateTimeLT" ;;
+        dbm)      echo "Unit::DBM" ;;
         "")       echo "" ;;
         *)        die "unknown display_unit: $1" ;;
     esac
@@ -305,7 +307,7 @@ bool MeterCommonImplementation::addOptionalLibraryFields(string field_names)
     }
     if (helps.size() > 2)
     {
-        error(EXIT_DRIVER_ERROR, "Bad library field, only zero or one pipe | symbol is allowed: %s", field_names.c_str());
+        errorAndExit(EXIT_DRIVER_ERROR, "Bad library field, only zero or one pipe | symbol is allowed: %s", field_names.c_str());
     }
 
 EOF

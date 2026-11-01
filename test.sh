@@ -104,6 +104,12 @@ if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
 tests/test_kamwater_ccm_tag.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
 
+tests/test_bad_aes_ccm.sh $PROG
+if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
+
+tests/test_short_telegrams.sh $PROG
+if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
+
 tests/test_shell.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
 
@@ -123,6 +129,9 @@ tests/test_meterfiles.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
 
 tests/test_config1.sh $PROG
+if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
+
+tests/test_xmq_config.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
 
 tests/test_logfile.sh $PROG
@@ -147,6 +156,12 @@ tests/test_conversions_more.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
 
 tests/test_inverse_compact_profile.sh $PROG
+if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
+
+tests/test_type_m_datetime.sh $PROG
+if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
+
+tests/test_compact_profile_record_order.sh $PROG
 if [ "$?" != "0" ]; then RC="1"; if [ "$STOP" = "true" ]; then exit 1; fi; fi
 
 tests/test_dbm.sh $PROG

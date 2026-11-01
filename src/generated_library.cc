@@ -71,7 +71,7 @@ bool MeterCommonImplementation::addOptionalLibraryFields(string field_names)
     }
     if (helps.size() > 2)
     {
-        error(EXIT_DRIVER_ERROR, "Bad library field, only zero or one pipe | symbol is allowed: %s", field_names.c_str());
+        errorAndExit(EXIT_DRIVER_ERROR, "Bad library field, only zero or one pipe | symbol is allowed: %s", field_names.c_str());
     }
 
     if (checkIf(fields,"target_hca"))
@@ -104,6 +104,23 @@ bool MeterCommonImplementation::addOptionalLibraryFields(string field_names)
             .set(MeasurementType::Instantaneous)
             .set(VIFRange::HeatCostAllocation)            );
         lastAddedField()->setChange(Change::Increasing);
+        markLastFieldAsLibrary();
+    }
+
+    if (checkIf(fields,"rssi_dbm"))
+    {
+        addNumericFieldWithExtractor(
+            "rssi",
+            "The RSSI reception level reported by the gateway."+help,
+            DEFAULT_PRINT_PROPERTIES,
+            Quantity::Power,
+            VifScaling::None,
+            DifSignedness::Signed,
+            FieldMatcher::build()
+            .set(MeasurementType::Instantaneous)
+            .set(VIFRange::ReceptionLevel),
+            Unit::DBM
+            );
         markLastFieldAsLibrary();
     }
 
