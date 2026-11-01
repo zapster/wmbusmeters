@@ -24,8 +24,7 @@ driver {
             vif_scaling    = Auto
             dif_signedness = Signed
             match {
-                measurement_type = Instantaneous
-                vif_range        = AnyEnergyVIF
+                difvifkey = 0E03
             }
         }
         field {
@@ -35,8 +34,7 @@ driver {
             vif_scaling    = Auto
             dif_signedness = Signed
             match {
-                measurement_type = Instantaneous
-                vif_range        = PowerW
+                difvifkey = 0B2B
             }
         }
         field {
